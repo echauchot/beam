@@ -17,6 +17,28 @@
  */
 package org.apache.beam.sdk.io.cassandra;
 
+import com.datastax.driver.core.Cluster;
+import com.datastax.driver.core.ResultSet;
+import com.datastax.driver.core.Row;
+import com.datastax.driver.core.Session;
+import com.datastax.driver.core.exceptions.DriverException;
+import com.datastax.driver.core.exceptions.DriverInternalError;
+import com.datastax.driver.core.querybuilder.QueryBuilder;
+import com.datastax.driver.mapping.Mapper;
+import com.datastax.driver.mapping.MappingManager;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
+import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.Uninterruptibles;
+
+import java.io.Serializable;
+import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.concurrent.ExecutionException;
+
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.coders.Coder;
 import org.apache.beam.sdk.coders.SerializableCoder;
@@ -34,29 +56,7 @@ import org.apache.beam.sdk.values.PCollectionView;
 import org.apache.beam.sdk.values.PDone;
 import org.apache.beam.sdk.values.PInput;
 
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Preconditions;
-import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.Uninterruptibles;
-
-import com.datastax.driver.core.Cluster;
-import com.datastax.driver.core.ResultSet;
-import com.datastax.driver.core.Row;
-import com.datastax.driver.core.Session;
-import com.datastax.driver.core.exceptions.DriverException;
-import com.datastax.driver.core.exceptions.DriverInternalError;
-import com.datastax.driver.core.querybuilder.QueryBuilder;
-import com.datastax.driver.mapping.Mapper;
-import com.datastax.driver.mapping.MappingManager;
-
 import org.joda.time.Instant;
-
-import java.io.Serializable;
-import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.concurrent.ExecutionException;
 
 /**
  * An IO to read and write on Apache Cassandra.
@@ -433,6 +433,7 @@ public class CassandraIO {
 
         private CassandraWriter<T> writer = null;
 
+        @ProcessElement
         public void processElement(ProcessContext c) throws Exception {
           if (writer == null) {
             CassandraWriteOperation<T> operation = c.sideInput(view);
@@ -451,7 +452,7 @@ public class CassandraIO {
           }
         }
 
-        @Override
+        @FinishBundle
         public void finishBundle(Context c) throws Exception {
           if (writer != null) {
             writer.flush();
@@ -464,7 +465,7 @@ public class CassandraIO {
 
       collection.apply("Cassandra Write", ParDo.of(new DoFn<CassandraWriteOperation<T>, Void>() {
 
-        @Override
+        @ProcessElement
         public void processElement(ProcessContext c) {
           CassandraWriteOperation<T> operation = c.element();
           operation.finalize();
