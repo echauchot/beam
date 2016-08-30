@@ -19,10 +19,15 @@ package org.apache.beam.sdk.io.cassandra;
 
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.testing.NeedsRunner;
+import org.apache.beam.sdk.testing.PAssert;
 import org.apache.beam.sdk.testing.TestPipeline;
+import org.apache.beam.sdk.transforms.Count;
+import org.apache.beam.sdk.transforms.Create;
 import org.apache.beam.sdk.values.PCollection;
 
 import com.datastax.driver.core.Cluster;
+import com.datastax.driver.core.ResultSet;
+import com.datastax.driver.core.Row;
 import com.datastax.driver.core.Session;
 import com.datastax.driver.core.exceptions.AlreadyExistsException;
 import com.datastax.driver.mapping.annotations.Column;
@@ -30,6 +35,7 @@ import com.datastax.driver.mapping.annotations.Table;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.service.CassandraDaemon;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -48,56 +54,52 @@ import java.io.Serializable;
 public class CassandraIOTest {
 
   private static final String CASSANDRA_KEYSPACE = "beam";
-  private static final int CASSANDRA_PORT = 9042;
-  private static final String CASSANDRA_HOST = "localhost";
+  private static final int CASSANDRA_PORT = 9142;
+  private static final String CASSANDRA_HOST = "127.0.0.1";
   private static final String CASSANDRA_TABLE = "beam";
 
   private static final Logger LOGGER = LoggerFactory.getLogger(CassandraIOTest.class);
 
   private CassandraDaemon cassandraDaemon;
+  private Cluster cluster;
+  private Session session;
 
   @Before
   public void startCassandra() throws Exception {
 
     System.setProperty("cassandra-foreground", "false");
     System.setProperty("cassandra.boot_without_jna", "true");
-    System.setProperty("cassandra.storagedir", "/tmp");
 
-    LOGGER.info("Starting Apache Cassandra");
     cassandraDaemon = new CassandraDaemon(true);
+    LOGGER.info("Starting Apache Cassandra daemon");
     cassandraDaemon.init(null);
     cassandraDaemon.start();
-  }
 
-  @After
-  public void stopCassandra() throws Exception {
-    Schema.instance.clear();
-    cassandraDaemon.stop();
-    cassandraDaemon.destroy();
-  }
+    LOGGER.info("Apache Cassandra up & running");
 
-  @Test
-  @Ignore
-  @Category(NeedsRunner.class)
-  public void testRead() throws Exception {
-    LOGGER.info("Insert data in Cassandra");
+    Thread.sleep(10000);
 
-    Cluster cluster = Cluster.builder().addContactPoints(new String[]{ CASSANDRA_HOST })
-        .withPort(CASSANDRA_PORT).withoutMetrics().withoutJMXReporting().build();
-    Session session = cluster.connect();
+    LOGGER.info("Init Cassandra client");
+    cluster = Cluster.builder().addContactPoint(CASSANDRA_HOST).withPort(CASSANDRA_PORT)
+        .withClusterName("beam-cluster").build();
+    session = cluster.connect();
 
     try {
+      LOGGER.info("Creating the Cassandra keyspace");
       session.execute("CREATE KEYSPACE " + CASSANDRA_KEYSPACE + " WITH REPLICATION = "
-          + "{'class':'SimpleStrategy', 'replication_factory':3};");
+          + "{'class':'SimpleStrategy', 'replication_factor':3};");
       LOGGER.info(CASSANDRA_KEYSPACE + " keyspace created");
     } catch (AlreadyExistsException e) {
       // nothing to do
     }
 
+    LOGGER.info("Use the Cassandra keyspace");
     session.execute("USE " + CASSANDRA_KEYSPACE);
 
     try {
-      session.execute("CREATE TABLE person(person_id int PRIMARY_KEY, person_name text);");
+      LOGGER.info("Create Cassandra table");
+      session.execute("CREATE TABLE person(person_id int, person_name text, PRIMARY KEY"
+          + "(person_id));");
     } catch (AlreadyExistsException e) {
       // nothing to do
     }
@@ -105,26 +107,77 @@ public class CassandraIOTest {
     LOGGER.info("Insert records");
     session.execute("INSERT INTO person(person_id, person_name) values(0, 'John Foo');");
     session.execute("INSERT INTO person(person_id, person_name) values(1, 'David Bar');");
+  }
 
-    session.close();
-    cluster.close();
+  @After
+  public void stopCassandra() throws Exception {
+    if (session != null) {
+      session.close();
+    }
+    if (cluster != null) {
+      cluster.close();
+    }
 
+    Schema.instance.clear();
+    if (cassandraDaemon != null) {
+      LOGGER.info("Stopping Apache Cassandra");
+      cassandraDaemon.stop();
+      LOGGER.info("Destroying Apache Cassandra daemon");
+      cassandraDaemon.destroy();
+      cassandraDaemon = null;
+    }
+  }
+
+  @Test
+  @Category(NeedsRunner.class)
+  public void testRead() throws Exception {
     Pipeline pipeline = TestPipeline.create();
 
     // read from Cassandra
-    PCollection read = pipeline.apply(CassandraIO.read()
+    PCollection<Person> read = pipeline.apply(CassandraIO.read()
         .withHosts(new String[]{ CASSANDRA_HOST })
         .withPort(CASSANDRA_PORT)
+        .withKeyspace(CASSANDRA_KEYSPACE)
+        .withTable(CASSANDRA_TABLE)
         .withEntityName(Person.class)
-        .withQuery("select * from person"));
+        .withRowKey("person_id")
+        .withQuery("select * from " + CASSANDRA_KEYSPACE + ".person"));
+
+    PAssert.thatSingleton(read.apply("Count", Count.<Person>globally())).isEqualTo(2L);
 
     pipeline.run();
+  }
+
+
+  /**
+   * This test works when executed alone, but fails when mixed with testRead().
+   * I'm investigating.
+   *
+   * @throws Exception
+   */
+  @Test
+  @Ignore
+  @Category(NeedsRunner.class)
+  public void testWrite() throws Exception {
+    Pipeline pipeline = TestPipeline.create();
+
+    Person person = new Person();
+    person.setName("Beam Test");
+
+    pipeline.apply(Create.of(person)).apply(CassandraIO.write().withHosts(new String[]{
+      CASSANDRA_HOST }).withPort(CASSANDRA_PORT).withKeyspace(CASSANDRA_KEYSPACE));
+
+    ResultSet result = session.execute("select * from " + CASSANDRA_KEYSPACE + ".person where "
+        + "person_name = 'Beam Test' ALLOW FILTERING");
+    for (Row row : result.all()) {
+      Assert.assertEquals("Beam Test", row.getString("person_name"));
+    }
   }
 
   /**
    * Simple Cassandra entity used in test.
    */
-  @Table(name = "person")
+  @Table(name = "person", keyspace = CASSANDRA_KEYSPACE)
   public static class Person implements Serializable {
 
     @Column(name = "person_name")

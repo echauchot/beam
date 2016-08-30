@@ -49,17 +49,14 @@ import com.datastax.driver.core.querybuilder.QueryBuilder;
 import com.datastax.driver.mapping.Mapper;
 import com.datastax.driver.mapping.MappingManager;
 
-import org.apache.cassandra.tools.NodeProbe;
 import org.joda.time.Instant;
 
-import java.io.IOException;
 import java.io.Serializable;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
-import java.util.regex.Pattern;
 
 /**
  * An IO to read and write on Apache Cassandra.
@@ -109,11 +106,11 @@ import java.util.regex.Pattern;
 public class CassandraIO {
 
   public static Read read() {
-    return new Read();
+    return new Read(new String[]{"localhost"}, null, 9042, null, null, null, null);
   }
 
   public static Write write() {
-    return new Write();
+    return new Write(new String[]{"localhost"}, null, 9042);
   }
 
   private CassandraIO() {}
@@ -125,53 +122,45 @@ public class CassandraIO {
   public static class Read extends PTransform<PBegin, PCollection> {
 
     public Read withHosts(String[] hosts) {
-      return new Read(hosts, keyspace, port, jmxPort, query, table, rowKey, entityName);
+      return new Read(hosts, keyspace, port, query, table, rowKey, entityName);
     }
 
     public Read withKeyspace(String keyspace) {
-      return new Read(hosts, keyspace, port, jmxPort, query, table, rowKey, entityName);
+      return new Read(hosts, keyspace, port, query, table, rowKey, entityName);
     }
 
     public Read withPort(int port) {
-      return new Read(hosts, keyspace, port, jmxPort, query, table, rowKey, entityName);
-    }
-
-    public Read withJmxPort(int jmxPort) {
-      return new Read(hosts, keyspace, port, jmxPort, query, table, rowKey, entityName);
+      return new Read(hosts, keyspace, port, query, table, rowKey, entityName);
     }
 
     public Read withQuery(String query) {
-      return new Read(hosts, keyspace, port, jmxPort, query, table, rowKey, entityName);
+      return new Read(hosts, keyspace, port, query, table, rowKey, entityName);
     }
 
     public Read withTable(String table) {
-      return new Read(hosts, keyspace, port, jmxPort, query, table, rowKey, entityName);
+      return new Read(hosts, keyspace, port, query, table, rowKey, entityName);
     }
 
     public Read withRowKey(String rowKey) {
-      return new Read(hosts, keyspace, port, jmxPort, query, table, rowKey, entityName);
+      return new Read(hosts, keyspace, port, query, table, rowKey, entityName);
     }
 
     public Read withEntityName(Class entityName) {
-      return new Read(hosts, keyspace, port, jmxPort, query, table, rowKey, entityName);
+      return new Read(hosts, keyspace, port, query, table, rowKey, entityName);
     }
 
     protected String[] hosts;
     protected String keyspace;
     protected int port;
-    protected int jmxPort;
     protected String table;
     protected String query;
     protected String rowKey;
     protected Class entityName;
 
-    private Read() {}
-
     private Read(
       String[] hosts,
       String keyspace,
       int port,
-      int jmxPort,
       String query,
       String table,
       String rowKey,
@@ -183,7 +172,6 @@ public class CassandraIO {
       this.query = query;
       this.entityName = entityName;
       this.keyspace = keyspace;
-      this.jmxPort = jmxPort;
       this.table = table;
       this.rowKey = rowKey;
     }
@@ -200,7 +188,7 @@ public class CassandraIO {
 
     @VisibleForTesting
     BoundedSource createSource() {
-      return new BoundedCassandraSource(hosts, keyspace, port, jmxPort, table, query, rowKey,
+      return new BoundedCassandraSource(hosts, keyspace, port, table, query, rowKey,
           entityName);
     }
 
@@ -210,6 +198,8 @@ public class CassandraIO {
       Preconditions.checkNotNull(port, "port");
       Preconditions.checkNotNull(query, "query");
       Preconditions.checkNotNull(entityName, "entityName");
+      Preconditions.checkNotNull(keyspace, "keyspace");
+      Preconditions.checkNotNull(table, "table");
     }
 
     @Override
@@ -220,6 +210,8 @@ public class CassandraIO {
       builder.addIfNotNull(DisplayData.item("port", port));
       builder.addIfNotNull(DisplayData.item("query", query));
       builder.addIfNotNull(DisplayData.item("entityName", entityName));
+      builder.addIfNotNull(DisplayData.item("keyspace", keyspace));
+      builder.addIfNotNull(DisplayData.item("table", table));
 
     }
 
@@ -230,7 +222,6 @@ public class CassandraIO {
     private String[] hosts;
     private String keyspace;
     private int port;
-    private int jmxPort;
     private String table;
     private String query;
     private String rowKey;
@@ -238,13 +229,12 @@ public class CassandraIO {
 
     private String rowCountQuery = null;
 
-    BoundedCassandraSource(String[] hosts, String keyspace, int port, int jmxPort, String table,
+    BoundedCassandraSource(String[] hosts, String keyspace, int port, String table,
                            String query,
                            String rowKey, Class entityName) {
       this.hosts = hosts;
       this.keyspace = keyspace;
       this.port = port;
-      this.jmxPort = jmxPort;
       this.table = table;
       this.query = query;
       this.rowKey = rowKey;
@@ -262,7 +252,6 @@ public class CassandraIO {
       Preconditions.checkNotNull(port, "port");
       Preconditions.checkNotNull(keyspace, "keyspace");
       Preconditions.checkNotNull(table, "table");
-      Preconditions.checkNotNull(rowKey, "rowKey");
     }
 
     @Override
@@ -272,93 +261,24 @@ public class CassandraIO {
 
     @Override
     public BoundedReader createReader(PipelineOptions pipelineOptions) {
-      return new BoundedCassandraReader(hosts, port, query, entityName);
+      return new BoundedCassandraReader(this);
     }
 
     @Override
     public long getEstimatedSizeBytes(PipelineOptions pipelineOptions) throws Exception {
-      NodeProbe probe = null;
-      Long estimatedByteSize = 0L;
-      Long totalCfByteSize = 0L;
-      rowCountQuery = "select count(*) from" + "\t"
-          + keyspace + "."
-          + table;
-      try {
-        if (jmxPort == 0) {
-          probe = new NodeProbe(hosts[0], 7199);
-        } else {
-          probe = new NodeProbe(hosts[0], jmxPort);
-        }
-        totalCfByteSize = (Long) probe.getColumnFamilyMetric(
-            keyspace, table,
-            "LiveDiskSpaceUsed") + (Long) probe.getColumnFamilyMetric(
-            keyspace, table,
-            "MemtableLiveDataSize");
+      Cluster cluster = Cluster.builder().addContactPoints(hosts).withPort(port).build();
+      Session session = cluster.newSession();
 
-        // start
-        if (query != null && !query.isEmpty()
-            && Pattern.compile("where", Pattern.CASE_INSENSITIVE + Pattern.LITERAL)
-            .matcher(query).find()) {
-          estimatedByteSize = getQueryResultBytesSize(totalCfByteSize);
-          if (estimatedByteSize == 0) {
-            estimatedByteSize = 1L;
-          }
-        } else {
-          estimatedByteSize = totalCfByteSize;
-        }
+      ResultSet resultSet = session.execute("SELECT partitions_count, mean_partition_size FROM "
+          + "system.size_estimates WHERE keyspace_name = ? AND table_name "
+          + "= ?", keyspace, table);
 
-      } catch (IOException e) {
-        throw e;
-      } finally {
-        if (probe != null) {
-          probe.close();
-        }
-      }
-      return estimatedByteSize;
-    }
+      Row row = resultSet.one();
 
-    private String getQueryForRowCount() {
-      String rowCountQuery;
-      if ((query != null && !query.isEmpty())
-          && Pattern.compile("where", Pattern.CASE_INSENSITIVE + Pattern.LITERAL)
-          .matcher(query).find()) {
-        rowCountQuery = "select count(*)\t" + query.substring(query.indexOf("from"));
-      } else {
-        rowCountQuery = this.rowCountQuery;
-      }
-      return rowCountQuery;
-    }
+      long partitionsCount = row.getLong("partitions_count");
+      long meanPartitionSize = row.getLong("mean_partition_size");
 
-    private long getQueryResultBytesSize(long cfByteSize) throws Exception {
-      long cfFamilyByteSize = cfByteSize;
-      long totalQueryByteSize = 0L;
-      long totalCfRowCount = getRowCount(rowCountQuery);
-      long queryRowCount = getRowCount(getQueryForRowCount());
-      int percentage = (int) ((queryRowCount * 100) / totalCfRowCount);
-      totalQueryByteSize = cfFamilyByteSize * percentage / 100;
-      return totalQueryByteSize;
-    }
-
-    private long getRowCount(String query) {
-      Cluster cluster = null;
-      Session session = null;
-      long rowCount = 0L;
-      try {
-        cluster = Cluster.builder()
-            .addContactPoints(hosts)
-            .withPort(port).build();
-        session = cluster.connect();
-        ResultSet queryResult = session.execute(query);
-        Row row = queryResult.one();
-        rowCount = row.getLong("count");
-      } catch (Exception ex) {
-        throw ex;
-      } finally {
-        if (session != null) {
-          session.close();
-        }
-      }
-      return rowCount;
+      return partitionsCount * meanPartitionSize;
     }
 
     @Override
@@ -402,7 +322,7 @@ public class CassandraIO {
         + rowKey + ")", startToken)).and(QueryBuilder.lt("token(" + rowKey + ")", endToken))
             .toString();
         query = splitQuery;
-        sourceList.add(new BoundedCassandraSource(hosts, keyspace, port, jmxPort, table, query,
+        sourceList.add(new BoundedCassandraSource(hosts, keyspace, port, table, query,
             rowKey, entityName));
       }
       return sourceList;
@@ -412,10 +332,7 @@ public class CassandraIO {
 
   private static class BoundedCassandraReader extends BoundedSource.BoundedReader {
 
-    private String[] hosts;
-    private int port;
-    private String query;
-    private Class entityName;
+    private final BoundedCassandraSource source;
 
     private Cluster cluster;
     private Session session;
@@ -423,20 +340,17 @@ public class CassandraIO {
     private Iterator iterator;
     private Object current;
 
-    public BoundedCassandraReader(String[] hosts, int port, String query, Class entityName) {
-      this.hosts = hosts;
-      this.port = port;
-      this.query = query;
-      this.entityName = entityName;
+    public BoundedCassandraReader(BoundedCassandraSource source) {
+      this.source = source;
     }
 
     @Override
     public boolean start() {
-      cluster = Cluster.builder().addContactPoints(hosts).withPort(port).build();
+      cluster = Cluster.builder().addContactPoints(source.hosts).withPort(source.port).build();
       session = cluster.connect();
-      resultSet = session.execute(query);
+      resultSet = session.execute(source.query);
       final MappingManager mappingManager = new MappingManager(session);
-      Mapper mapper = (Mapper) mappingManager.mapper(entityName);
+      Mapper mapper = (Mapper) mappingManager.mapper(source.entityName);
       iterator = mapper.map(resultSet).iterator();
       return advance();
     }
@@ -459,7 +373,7 @@ public class CassandraIO {
 
     @Override
     public BoundedSource getCurrentSource() {
-      return null;
+      return source;
     }
 
     @Override
@@ -495,8 +409,6 @@ public class CassandraIO {
     public Write withPort(int port) {
       return new Write(hosts, keyspace, port);
     }
-
-    private Write() {}
 
     private Write(String[] hosts, String keyspace, int port) {
       this.hosts = hosts;
@@ -550,7 +462,7 @@ public class CassandraIO {
 
       PCollectionView<Iterable<Void>> voidView = results.apply(View.<Void> asIterable());
 
-      collection.apply(ParDo.of(new DoFn<CassandraWriteOperation<T>, Void>() {
+      collection.apply("Cassandra Write", ParDo.of(new DoFn<CassandraWriteOperation<T>, Void>() {
 
         @Override
         public void processElement(ProcessContext c) {
