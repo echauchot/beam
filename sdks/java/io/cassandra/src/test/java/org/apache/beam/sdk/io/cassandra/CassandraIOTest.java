@@ -26,6 +26,7 @@ import com.datastax.driver.mapping.annotations.Column;
 import com.datastax.driver.mapping.annotations.Table;
 
 import java.io.Serializable;
+import java.util.Arrays;
 
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.testing.NeedsRunner;
@@ -137,10 +138,12 @@ public class CassandraIOTest {
     Pipeline pipeline = TestPipeline.create();
 
     // read from Cassandra
-    PCollection<Person> read = pipeline.apply(CassandraIO.read()
-        .withHosts(new String[]{ CASSANDRA_HOST })
-        .withPort(CASSANDRA_PORT)
-        .withKeyspace(CASSANDRA_KEYSPACE)
+    PCollection<Person> read = pipeline.apply(CassandraIO.<Person>read()
+        .withConnectionConfiguration(
+            CassandraIO.ConnectionConfiguration.create(
+                Arrays.asList(CASSANDRA_HOST),
+                CASSANDRA_KEYSPACE,
+                CASSANDRA_PORT))
         .withTable(CASSANDRA_TABLE)
         .withEntityName(Person.class)
         .withRowKey("person_id")
@@ -167,8 +170,13 @@ public class CassandraIOTest {
     Person person = new Person();
     person.setName("Beam Test");
 
-    pipeline.apply(Create.of(person)).apply(CassandraIO.write().withHosts(new String[]{
-      CASSANDRA_HOST }).withPort(CASSANDRA_PORT).withKeyspace(CASSANDRA_KEYSPACE));
+    pipeline.apply(Create.of(person)).apply(
+        CassandraIO.<Person>write()
+            .withConnectionConfiguration(CassandraIO.ConnectionConfiguration.create(
+                Arrays.asList(CASSANDRA_HOST),
+                CASSANDRA_KEYSPACE,
+                CASSANDRA_PORT
+            )));
 
     ResultSet result = session.execute("select * from " + CASSANDRA_KEYSPACE + ".person where "
         + "person_name = 'Beam Test' ALLOW FILTERING");

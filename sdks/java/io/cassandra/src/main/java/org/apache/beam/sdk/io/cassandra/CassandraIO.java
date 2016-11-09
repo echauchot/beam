@@ -17,6 +17,9 @@
  */
 package org.apache.beam.sdk.io.cassandra;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.Row;
@@ -27,8 +30,8 @@ import com.datastax.driver.core.querybuilder.QueryBuilder;
 import com.datastax.driver.mapping.Mapper;
 import com.datastax.driver.mapping.MappingManager;
 
+import com.google.auto.value.AutoValue;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Uninterruptibles;
 
@@ -38,6 +41,8 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
+
+import javax.annotation.Nullable;
 
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.coders.Coder;
@@ -54,7 +59,6 @@ import org.apache.beam.sdk.values.PBegin;
 import org.apache.beam.sdk.values.PCollection;
 import org.apache.beam.sdk.values.PCollectionView;
 import org.apache.beam.sdk.values.PDone;
-import org.apache.beam.sdk.values.PInput;
 
 import org.joda.time.Instant;
 
@@ -65,17 +69,19 @@ import org.joda.time.Instant;
  *
  * <p>CassandraIO provides a source to read and returns a bounded collection of entities as {@code
  * PCollection<Entity>}.
- * An entity is built by Cassandra mapper based on a POJO containing annotations.</p>
+ * An entity is built by Cassandra mapper based on a POJO containing annotations.
  *
  * <p>To configure a Cassandra source, you have to provide the hosts, port, and keyspace of the
- * Cassandra instance. The following example illustrate various options for configuring the IO:</p>
+ * Cassandra instance, wrapped as a {@link ConnectionConfiguration}.
+ * The following example illustrate various options for configuring the IO:
  *
  * <pre>{@code
  *
- * pipeline.apply(CassandraIO.read()
- *     .withHosts(new String[]{ "host1", "host2" })
- *     .withPort(9042)
- *     .withKeyspace("beam")
+ * pipeline.apply(CassandraIO.<Person>read()
+ *     .withConnectionConfiguration(CassandraIO.ConnectionConfiguration.create(
+ *        Arrays.asList("host1", "host1"),
+ *        9042,
+ *        "beam"))
  *     .withQuery("select * from Person")
  *     .withEntityName(Person.class)
  *     // above options are the minimum set, returns PCollection<Person>
@@ -84,174 +90,186 @@ import org.joda.time.Instant;
  *
  * <h3>Writing to Apache Cassandra</h3>
  *
- * <p>CassandraIO write provides a sink to write to Apache Cassandra. It expects a {@code
- * PCollection}
- * of entities that will be mapped and written in Cassandra.
- * </p>
+ * <p>CassandraIO write provides a sink to write to Apache Cassandra. It expects a
+ * {@code PCollection} of entities that will be mapped and written in Cassandra.
  *
- * <p>To configure the sink, you have to specify hosts, port, keyspace, and entity class:</p>
+ * <p>To configure the write, you have to specify hosts, port, keyspace wrapped as a
+ * {@link ConnectionConfiguration} and the entity:
  *
  * <pre>{@code
  *
  * pipeline
- *     .apply(...) // returns PCollection<Person>
- *     .apply(CassandraIO.write()
- *        .withHosts(new String[]{ "host1", "host2" })
- *        .withPort(9042)
- *        .withKeyspace("beam")
+ *     .apply(...) // provides PCollection<Person>
+ *     .apply(CassandraIO.<Person>write()
+ *        .withConnectionConfiguration(CassandraIO.ConnectionConfiguration.create(
+ *           Arrays.asList("host1", "host2"),
+ *           9042,
+ *           "beam"))
  *        .withEntityName(Person.class);
  *
  * }</pre>
  */
 public class CassandraIO {
 
-  public static Read read() {
-    return new Read(new String[]{"localhost"}, null, 9042, null, null, null, null);
+  public static <T> Read<T> read() {
+    return new AutoValue_CassandraIO_Read.Builder<T>().build();
   }
 
-  public static Write write() {
-    return new Write(new String[]{"localhost"}, null, 9042);
+  public static <T> Write<T> write() {
+    return new AutoValue_CassandraIO_Write.Builder<T>().build();
   }
 
   private CassandraIO() {}
 
   /**
+   * POJO describing a connection to Apache Cassandra database.
+   */
+  @AutoValue
+  public abstract static class ConnectionConfiguration implements Serializable {
+    abstract List<String> getHosts();
+    abstract String getKeyspace();
+    abstract int getPort();
+
+    abstract Builder builder();
+
+    @AutoValue.Builder
+    abstract static class Builder {
+      abstract Builder setHosts(List<String> hosts);
+      abstract Builder setKeyspace(String keyspace);
+      abstract Builder setPort(int port);
+      abstract ConnectionConfiguration build();
+    }
+
+    public static ConnectionConfiguration create(List<String> hosts, String keyspace, int port) {
+      checkNotNull(hosts, "hosts");
+      checkNotNull(keyspace, "keyspace");
+      return new AutoValue_CassandraIO_ConnectionConfiguration.Builder()
+          .setHosts(hosts)
+          .setKeyspace(keyspace)
+          .setPort(port)
+          .build();
+    }
+
+    public void validate() {
+      checkNotNull(getHosts(), "hosts");
+      checkArgument(getHosts().size() >= 1, "hosts should contain at least one host");
+      checkNotNull(getKeyspace(), "keyspace");
+    }
+
+    public void populateDisplayData(DisplayData.Builder builder) {
+      builder.addIfNotNull(DisplayData.item("hosts", getHosts().toString()));
+      builder.addIfNotNull(DisplayData.item("keyspace", getKeyspace()));
+      builder.add(DisplayData.item("port", getPort()));
+    }
+
+    Cluster getCluster() {
+      return Cluster.builder().addContactPoints(getHosts().toArray(new String[0])).withPort
+          (getPort())
+          .build();
+    }
+  }
+
+  /**
    * A {@link PTransform} to read data from Apache Cassandra. See {@link CassandraIO} for more
    * information on usage and configuration.
    */
-  public static class Read extends PTransform<PBegin, PCollection> {
+  @AutoValue
+  public abstract static class Read<T> extends PTransform<PBegin, PCollection<T>> {
 
-    public Read withHosts(String[] hosts) {
-      return new Read(hosts, keyspace, port, query, table, rowKey, entityName);
+    @Nullable abstract ConnectionConfiguration getConnectionConfiguration();
+    @Nullable abstract String getQuery();
+    @Nullable abstract String getTable();
+    @Nullable abstract String getRowKey();
+    @Nullable abstract Class<T> getEntityName();
+
+    abstract Builder<T> builder();
+
+    @AutoValue.Builder
+    abstract static class Builder<T> {
+      abstract Builder<T> setConnectionConfiguration(ConnectionConfiguration
+                                                         connectionConfiguration);
+      abstract Builder<T> setQuery(String query);
+      abstract Builder<T> setTable(String table);
+      abstract Builder<T> setRowKey(String rowKey);
+      abstract Builder<T> setEntityName(Class<T> entityName);
+      abstract Read<T> build();
     }
 
-    public Read withKeyspace(String keyspace) {
-      return new Read(hosts, keyspace, port, query, table, rowKey, entityName);
+    public Read<T> withConnectionConfiguration(ConnectionConfiguration connectionConfiguration) {
+      checkNotNull(connectionConfiguration, "ConnectionConfiguration");
+      return builder().setConnectionConfiguration(connectionConfiguration).build();
     }
 
-    public Read withPort(int port) {
-      return new Read(hosts, keyspace, port, query, table, rowKey, entityName);
+    public Read<T> withQuery(String query) {
+      checkNotNull(query, "query");
+      return builder().setQuery(query).build();
     }
 
-    public Read withQuery(String query) {
-      return new Read(hosts, keyspace, port, query, table, rowKey, entityName);
+    public Read<T> withTable(String table) {
+      checkNotNull(table, "table");
+      return builder().setTable(table).build();
     }
 
-    public Read withTable(String table) {
-      return new Read(hosts, keyspace, port, query, table, rowKey, entityName);
+    public Read<T> withRowKey(String rowKey) {
+      checkNotNull(rowKey, "RowKey");
+      return builder().setRowKey(rowKey).build();
     }
 
-    public Read withRowKey(String rowKey) {
-      return new Read(hosts, keyspace, port, query, table, rowKey, entityName);
-    }
-
-    public Read withEntityName(Class entityName) {
-      return new Read(hosts, keyspace, port, query, table, rowKey, entityName);
-    }
-
-    protected String[] hosts;
-    protected String keyspace;
-    protected int port;
-    protected String table;
-    protected String query;
-    protected String rowKey;
-    protected Class entityName;
-
-    private Read(
-      String[] hosts,
-      String keyspace,
-      int port,
-      String query,
-      String table,
-      String rowKey,
-      Class entityName) {
-      super("Cassandra.ReadIO");
-
-      this.hosts = hosts;
-      this.port = port;
-      this.query = query;
-      this.entityName = entityName;
-      this.keyspace = keyspace;
-      this.table = table;
-      this.rowKey = rowKey;
+    public Read<T> withEntityName(Class<T> entityName) {
+      return builder().setEntityName(entityName).build();
     }
 
     @Override
-    public PCollection apply(PBegin input) {
-      org.apache.beam.sdk.io.Read.Bounded bounded =
-          org.apache.beam.sdk.io.Read.from(createSource());
-
-      PTransform<PInput, PCollection> transform = bounded;
-
-      return input.getPipeline().apply(transform);
+    public PCollection<T> apply(PBegin input) {
+      return input.apply(org.apache.beam.sdk.io.Read.from(createSource()));
     }
 
     @VisibleForTesting
-    BoundedSource createSource() {
-      return new BoundedCassandraSource(hosts, keyspace, port, table, query, rowKey,
-          entityName);
+    BoundedSource<T> createSource() {
+      return new BoundedCassandraSource(this, null);
     }
 
     @Override
     public void validate(PBegin input) {
-      Preconditions.checkNotNull(hosts, "hosts");
-      Preconditions.checkNotNull(port, "port");
-      Preconditions.checkNotNull(query, "query");
-      Preconditions.checkNotNull(entityName, "entityName");
-      Preconditions.checkNotNull(keyspace, "keyspace");
-      Preconditions.checkNotNull(table, "table");
+      getConnectionConfiguration().validate();
+      checkNotNull(getQuery(), "query");
+      checkNotNull(getEntityName(), "entityName");
+      checkNotNull(getTable(), "table");
     }
 
     @Override
     public void populateDisplayData(DisplayData.Builder builder) {
       super.populateDisplayData(builder);
 
-      builder.addIfNotNull(DisplayData.item("hosts", hosts.toString()));
-      builder.addIfNotNull(DisplayData.item("port", port));
-      builder.addIfNotNull(DisplayData.item("query", query));
-      builder.addIfNotNull(DisplayData.item("entityName", entityName));
-      builder.addIfNotNull(DisplayData.item("keyspace", keyspace));
-      builder.addIfNotNull(DisplayData.item("table", table));
+      getConnectionConfiguration().populateDisplayData(builder);
+
+      builder.addIfNotNull(DisplayData.item("query", getQuery()));
+      builder.addIfNotNull(DisplayData.item("entityName", getEntityName().getName()));
+      builder.addIfNotNull(DisplayData.item("rowKey", getRowKey()));
+      builder.addIfNotNull(DisplayData.item("table", getTable()));
 
     }
 
   }
 
-  private static class BoundedCassandraSource extends BoundedSource {
+  private static class BoundedCassandraSource<T> extends BoundedSource<T> {
 
-    private String[] hosts;
-    private String keyspace;
-    private int port;
-    private String table;
-    private String query;
-    private String rowKey;
-    private Class entityName;
+    private Read spec;
+    private String splitQuery;
 
-    private String rowCountQuery = null;
-
-    BoundedCassandraSource(String[] hosts, String keyspace, int port, String table,
-                           String query,
-                           String rowKey, Class entityName) {
-      this.hosts = hosts;
-      this.keyspace = keyspace;
-      this.port = port;
-      this.table = table;
-      this.query = query;
-      this.rowKey = rowKey;
-      this.entityName = entityName;
+    BoundedCassandraSource(Read spec, String splitQuery) {
+      this.spec = spec;
+      this.splitQuery = splitQuery;
     }
 
     @Override
-    public Coder getDefaultOutputCoder() {
-      return SerializableCoder.of(entityName);
+    public Coder<T> getDefaultOutputCoder() {
+      return SerializableCoder.of(spec.getEntityName());
     }
 
     @Override
     public void validate() {
-      Preconditions.checkNotNull(hosts, "hosts");
-      Preconditions.checkNotNull(port, "port");
-      Preconditions.checkNotNull(keyspace, "keyspace");
-      Preconditions.checkNotNull(table, "table");
+      spec.validate(null);
     }
 
     @Override
@@ -266,28 +284,31 @@ public class CassandraIO {
 
     @Override
     public long getEstimatedSizeBytes(PipelineOptions pipelineOptions) throws Exception {
-      Cluster cluster = Cluster.builder().addContactPoints(hosts).withPort(port).build();
-      Session session = cluster.newSession();
+      try (Cluster cluster = spec.getConnectionConfiguration().getCluster()) {
+        try (Session session = cluster.newSession()) {
 
-      ResultSet resultSet = session.execute("SELECT partitions_count, mean_partition_size FROM "
-          + "system.size_estimates WHERE keyspace_name = ? AND table_name "
-          + "= ?", keyspace, table);
+          ResultSet resultSet = session.execute("SELECT partitions_count, mean_partition_size FROM "
+              + "system.size_estimates WHERE keyspace_name = ? AND table_name "
+              + "= ?", spec.getConnectionConfiguration().getKeyspace(), spec.getTable());
 
-      Row row = resultSet.one();
+          Row row = resultSet.one();
 
-      long partitionsCount = row.getLong("partitions_count");
-      long meanPartitionSize = row.getLong("mean_partition_size");
+          long partitionsCount = row.getLong("partitions_count");
+          long meanPartitionSize = row.getLong("mean_partition_size");
 
-      return partitionsCount * meanPartitionSize;
+
+          return partitionsCount * meanPartitionSize;
+        }
+      }
     }
 
     @Override
-    public List<BoundedSource> splitIntoBundles(long desiredBundleSizeBytes,
+    public List<BoundedSource<T>> splitIntoBundles(long desiredBundleSizeBytes,
                                                 PipelineOptions pipelineOptions) {
       int exponent = 63;
       long numSplits = 10;
       long startToken, endToken = 0L;
-      List<BoundedSource> sourceList = new ArrayList<>();
+      List<BoundedSource<T>> sourceList = new ArrayList<>();
       try {
         if (desiredBundleSizeBytes > 0) {
           numSplits = getEstimatedSizeBytes(pipelineOptions) / desiredBundleSizeBytes;
@@ -318,27 +339,30 @@ public class CassandraIO {
         if (splitCount == numSplits) {
           endToken = (long) Math.pow(2, exponent);
         }
-        splitQuery = QueryBuilder.select().from(keyspace, table).where(QueryBuilder.gte("token("
-        + rowKey + ")", startToken)).and(QueryBuilder.lt("token(" + rowKey + ")", endToken))
+        splitQuery =
+            QueryBuilder
+                .select()
+                .from(spec.getConnectionConfiguration().getKeyspace(), spec.getTable())
+                .where(
+                    QueryBuilder.gte("token(" + spec.getRowKey() + ")", startToken))
+                .and(QueryBuilder.lt("token(" + spec.getRowKey() + ")", endToken))
             .toString();
-        query = splitQuery;
-        sourceList.add(new BoundedCassandraSource(hosts, keyspace, port, table, query,
-            rowKey, entityName));
+        sourceList.add(new BoundedCassandraSource(spec, splitQuery));
       }
       return sourceList;
     }
 
   }
 
-  private static class BoundedCassandraReader extends BoundedSource.BoundedReader {
+  private static class BoundedCassandraReader<T> extends BoundedSource.BoundedReader<T> {
 
     private final BoundedCassandraSource source;
 
     private Cluster cluster;
     private Session session;
     private ResultSet resultSet;
-    private Iterator iterator;
-    private Object current;
+    private Iterator<T> iterator;
+    private T current;
 
     public BoundedCassandraReader(BoundedCassandraSource source) {
       this.source = source;
@@ -346,11 +370,12 @@ public class CassandraIO {
 
     @Override
     public boolean start() {
-      cluster = Cluster.builder().addContactPoints(source.hosts).withPort(source.port).build();
+      Read spec = source.spec;
+      cluster = spec.getConnectionConfiguration().getCluster();
       session = cluster.connect();
-      resultSet = session.execute(source.query);
+      resultSet = session.execute(spec.getQuery());
       final MappingManager mappingManager = new MappingManager(session);
-      Mapper mapper = (Mapper) mappingManager.mapper(source.entityName);
+      Mapper mapper = (Mapper) mappingManager.mapper(spec.getEntityName());
       iterator = mapper.map(resultSet).iterator();
       return advance();
     }
@@ -377,7 +402,7 @@ public class CassandraIO {
     }
 
     @Override
-    public Object getCurrent() {
+    public T getCurrent() {
       return current;
     }
 
@@ -392,28 +417,23 @@ public class CassandraIO {
    * A {@link PTransform} to write into Apache Cassandra. See {@link CassandraIO} for more
    * information on usage and configuration.
    */
-  public static class Write<T> extends PTransform<PCollection<T>, PDone> {
+  @AutoValue
+  public abstract static class Write<T> extends PTransform<PCollection<T>, PDone> {
 
-    private String[] hosts;
-    private String keyspace;
-    private int port;
+    @Nullable abstract ConnectionConfiguration getConnectionConfiguration();
 
-    public Write withHosts(String[] hosts) {
-      return new Write(hosts, keyspace, port);
+    abstract Builder<T> builder();
+
+    @AutoValue.Builder
+    abstract static class Builder<T> {
+      abstract Builder<T> setConnectionConfiguration(ConnectionConfiguration
+                                                         connectionConfiguration);
+      abstract Write<T> build();
     }
 
-    public Write withKeyspace(String keyspace) {
-      return new Write(hosts, keyspace, port);
-    }
-
-    public Write withPort(int port) {
-      return new Write(hosts, keyspace, port);
-    }
-
-    private Write(String[] hosts, String keyspace, int port) {
-      this.hosts = hosts;
-      this.keyspace = keyspace;
-      this.port = port;
+    public Write<T> withConnectionConfiguration(ConnectionConfiguration connectionConfiguration) {
+      checkNotNull(connectionConfiguration, "connectionConfiguration");
+      return builder().setConnectionConfiguration(connectionConfiguration).build();
     }
 
     public PDone apply(PCollection<T> input) {
@@ -467,6 +487,7 @@ public class CassandraIO {
 
         @ProcessElement
         public void processElement(ProcessContext c) {
+          // TODO could be implemented per bundle directly in the DoFn
           CassandraWriteOperation<T> operation = c.element();
           operation.finalize();
         }
@@ -480,26 +501,16 @@ public class CassandraIO {
 
   private static class CassandraWriteOperation<T> implements Serializable {
 
-    private final String[] hosts;
-    private final String keyspace;
-    private final int port;
+    private Write spec;
 
     private transient Cluster cluster;
     private transient Session session;
     private transient MappingManager mappingManager;
 
-    private synchronized Cluster getCluster() {
-      if (cluster == null) {
-        cluster = Cluster.builder().addContactPoints(hosts).withPort(port).withoutMetrics()
-            .withoutJMXReporting().build();
-      }
-      return cluster;
-    }
-
     private synchronized Session getSession() {
       if (session == null) {
-        Cluster cluster = getCluster();
-        session = cluster.connect(keyspace);
+        cluster = spec.getConnectionConfiguration().getCluster();
+        session = cluster.connect(spec.getConnectionConfiguration().getKeyspace());
       }
       return session;
     }
@@ -512,19 +523,17 @@ public class CassandraIO {
       return mappingManager;
     }
 
-    public CassandraWriteOperation(Write<T> write) {
-      hosts = write.hosts;
-      port = write.port;
-      keyspace = write.keyspace;
+    public CassandraWriteOperation(Write<T> spec) {
+      this.spec = spec;
     }
 
     public CassandraWriter<T> createWriter() {
       return new CassandraWriter<T>(this, getMappingManager());
     }
 
-    public void finalize() {
-      getSession().close();
-      getCluster().close();
+    protected void finalize() {
+      session.close();
+      cluster.close();
     }
 
   }
