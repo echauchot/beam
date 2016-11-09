@@ -26,6 +26,7 @@ import com.datastax.driver.mapping.annotations.Column;
 import com.datastax.driver.mapping.annotations.Table;
 
 import java.io.Serializable;
+import java.net.ServerSocket;
 import java.util.Arrays;
 
 import org.apache.beam.sdk.Pipeline;
@@ -58,7 +59,7 @@ import org.slf4j.LoggerFactory;
 public class CassandraIOTest {
 
   private static final String CASSANDRA_KEYSPACE = "beam";
-  private static final int CASSANDRA_PORT = 9142;
+  private static int cassandraPort;
   private static final String CASSANDRA_HOST = "127.0.0.1";
   private static final String CASSANDRA_TABLE = "beam";
 
@@ -68,8 +69,12 @@ public class CassandraIOTest {
   private Cluster cluster;
   private Session session;
 
+  // TODO start Cassandra with @BeforeClass
   @Before
   public void startCassandra() throws Exception {
+    try (ServerSocket serverSocket = new ServerSocket(0)) {
+      cassandraPort = serverSocket.getLocalPort();
+    }
 
     System.setProperty("cassandra-foreground", "false");
     System.setProperty("cassandra.boot_without_jna", "true");
@@ -84,7 +89,7 @@ public class CassandraIOTest {
     Thread.sleep(10000);
 
     LOGGER.info("Init Cassandra client");
-    cluster = Cluster.builder().addContactPoint(CASSANDRA_HOST).withPort(CASSANDRA_PORT)
+    cluster = Cluster.builder().addContactPoint(CASSANDRA_HOST).withPort(cassandraPort)
         .withClusterName("beam-cluster").build();
     session = cluster.connect();
 
@@ -143,7 +148,7 @@ public class CassandraIOTest {
             CassandraIO.ConnectionConfiguration.create(
                 Arrays.asList(CASSANDRA_HOST),
                 CASSANDRA_KEYSPACE,
-                CASSANDRA_PORT))
+                cassandraPort))
         .withTable(CASSANDRA_TABLE)
         .withEntityName(Person.class)
         .withRowKey("person_id")
@@ -157,7 +162,7 @@ public class CassandraIOTest {
 
   /**
    * This test works when executed alone, but fails when mixed with testRead().
-   * I'm investigating.
+   * TODO Fix
    *
    * @throws Exception
    */
@@ -175,7 +180,7 @@ public class CassandraIOTest {
             .withConnectionConfiguration(CassandraIO.ConnectionConfiguration.create(
                 Arrays.asList(CASSANDRA_HOST),
                 CASSANDRA_KEYSPACE,
-                CASSANDRA_PORT
+                cassandraPort
             )));
 
     ResultSet result = session.execute("select * from " + CASSANDRA_KEYSPACE + ".person where "
