@@ -18,46 +18,36 @@
 package org.apache.beam.sdk.io.cassandra;
 
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
 
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.Row;
 import com.datastax.driver.core.Session;
-import com.datastax.driver.core.exceptions.DriverException;
-import com.datastax.driver.core.exceptions.DriverInternalError;
 import com.datastax.driver.core.querybuilder.QueryBuilder;
 import com.datastax.driver.mapping.Mapper;
 import com.datastax.driver.mapping.MappingManager;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.Uninterruptibles;
 
 import java.io.Serializable;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.concurrent.ExecutionException;
 
 import javax.annotation.Nullable;
 
-import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.coders.Coder;
-import org.apache.beam.sdk.coders.SerializableCoder;
 import org.apache.beam.sdk.io.BoundedSource;
 import org.apache.beam.sdk.options.PipelineOptions;
-import org.apache.beam.sdk.transforms.Create;
 import org.apache.beam.sdk.transforms.DoFn;
 import org.apache.beam.sdk.transforms.PTransform;
 import org.apache.beam.sdk.transforms.ParDo;
-import org.apache.beam.sdk.transforms.View;
 import org.apache.beam.sdk.transforms.display.DisplayData;
 import org.apache.beam.sdk.values.PBegin;
 import org.apache.beam.sdk.values.PCollection;
-import org.apache.beam.sdk.values.PCollectionView;
 import org.apache.beam.sdk.values.PDone;
 
 import org.joda.time.Instant;
@@ -141,19 +131,19 @@ public class CassandraIO {
     }
 
     public static ConnectionConfiguration create(List<String> hosts, String keyspace, int port) {
-      checkNotNull(hosts, "hosts");
-      checkNotNull(keyspace, "keyspace");
+      checkArgument(hosts != null, "ConnectionConfiguration.create(hosts, keyspace, port) "
+              + "called with null hosts");
+      checkArgument(hosts.size() >= 1, "ConnectionConfiguration.create(hosts, keyspace, port) "
+          + "called with an empty hosts list");
+      checkArgument(keyspace != null, "ConnectionConfiguration.create(hosts, keyspace, port) "
+          + "called with null keyspace");
+      checkArgument(port > 0, "ConnectionConfiguration.create(hosts, keyspace, port) called "
+          + "with invalid port number");
       return new AutoValue_CassandraIO_ConnectionConfiguration.Builder()
           .setHosts(hosts)
           .setKeyspace(keyspace)
           .setPort(port)
           .build();
-    }
-
-    public void validate() {
-      checkNotNull(getHosts(), "hosts");
-      checkArgument(getHosts().size() >= 1, "hosts should contain at least one host");
-      checkNotNull(getKeyspace(), "keyspace");
     }
 
     public void populateDisplayData(DisplayData.Builder builder) {
@@ -181,6 +171,7 @@ public class CassandraIO {
     @Nullable abstract String getTable();
     @Nullable abstract String getRowKey();
     @Nullable abstract Class<T> getEntityName();
+    @Nullable abstract Coder<T> getCoder();
 
     abstract Builder<T> builder();
 
@@ -192,35 +183,45 @@ public class CassandraIO {
       abstract Builder<T> setTable(String table);
       abstract Builder<T> setRowKey(String rowKey);
       abstract Builder<T> setEntityName(Class<T> entityName);
+      abstract Builder<T> setCoder(Coder<T> coder);
       abstract Read<T> build();
     }
 
     public Read<T> withConnectionConfiguration(ConnectionConfiguration connectionConfiguration) {
-      checkNotNull(connectionConfiguration, "ConnectionConfiguration");
+      checkArgument(connectionConfiguration != null, "CassandraIO.read()"
+          + ".withConnectionConfiguration(configuration) called with null configuration");
       return builder().setConnectionConfiguration(connectionConfiguration).build();
     }
 
     public Read<T> withQuery(String query) {
-      checkNotNull(query, "query");
+      checkArgument(query != null, "CassandraIO.read().withQuery(query) called with null query");
       return builder().setQuery(query).build();
     }
 
     public Read<T> withTable(String table) {
-      checkNotNull(table, "table");
+      checkArgument(table != null, "CassandraIO.read().withTable(table) called with null table");
       return builder().setTable(table).build();
     }
 
     public Read<T> withRowKey(String rowKey) {
-      checkNotNull(rowKey, "RowKey");
+      checkArgument(rowKey != null, "CassandraIO.read().withRowKey(rowKey) called with null "
+          + "rowKey");
       return builder().setRowKey(rowKey).build();
     }
 
     public Read<T> withEntityName(Class<T> entityName) {
+      checkArgument(entityName != null, "CassandraIO.read().withEntityName(entityName) called "
+          + "with null entityName");
       return builder().setEntityName(entityName).build();
     }
 
+    public Read<T> withCoder(Coder<T> coder) {
+      checkArgument(coder != null, "CassandraIO.read().withCoder(coder) called with null coder");
+      return builder().setCoder(coder).build();
+    }
+
     @Override
-    public PCollection<T> apply(PBegin input) {
+    public PCollection<T> expand(PBegin input) {
       return input.apply(org.apache.beam.sdk.io.Read.from(createSource()));
     }
 
@@ -231,10 +232,12 @@ public class CassandraIO {
 
     @Override
     public void validate(PBegin input) {
-      getConnectionConfiguration().validate();
-      checkNotNull(getQuery(), "query");
-      checkNotNull(getEntityName(), "entityName");
-      checkNotNull(getTable(), "table");
+      checkState(getQuery() != null, "CassandraIO.read() requires a query to be set via "
+          + "withQuery(query)");
+      checkState(getEntityName() != null, "CassandraIO.read() requires an entity name to be set "
+          + "via withEntityName(entityName)");
+      checkState(getTable() != null, "CassandraIO.read() requires a table to be set via "
+          + "withTable(table)");
     }
 
     @Override
@@ -247,24 +250,23 @@ public class CassandraIO {
       builder.addIfNotNull(DisplayData.item("entityName", getEntityName().getName()));
       builder.addIfNotNull(DisplayData.item("rowKey", getRowKey()));
       builder.addIfNotNull(DisplayData.item("table", getTable()));
-
     }
 
   }
 
   private static class BoundedCassandraSource<T> extends BoundedSource<T> {
 
-    private Read spec;
+    private Read<T> spec;
     private String splitQuery;
 
-    BoundedCassandraSource(Read spec, String splitQuery) {
+    BoundedCassandraSource(Read<T> spec, String splitQuery) {
       this.spec = spec;
       this.splitQuery = splitQuery;
     }
 
     @Override
     public Coder<T> getDefaultOutputCoder() {
-      return SerializableCoder.of(spec.getEntityName());
+      return spec.getCoder();
     }
 
     @Override
@@ -278,7 +280,7 @@ public class CassandraIO {
     }
 
     @Override
-    public BoundedReader createReader(PipelineOptions pipelineOptions) {
+    public BoundedReader<T> createReader(PipelineOptions pipelineOptions) {
       return new BoundedCassandraReader(this);
     }
 
@@ -293,9 +295,12 @@ public class CassandraIO {
 
           Row row = resultSet.one();
 
-          long partitionsCount = row.getLong("partitions_count");
-          long meanPartitionSize = row.getLong("mean_partition_size");
-
+          long partitionsCount = 0;
+          long meanPartitionSize = 0;
+          if (row != null) {
+            partitionsCount = row.getLong("partitions_count");
+            meanPartitionSize = row.getLong("mean_partition_size");
+          }
 
           return partitionsCount * meanPartitionSize;
         }
@@ -306,16 +311,16 @@ public class CassandraIO {
     public List<BoundedSource<T>> splitIntoBundles(long desiredBundleSizeBytes,
                                                 PipelineOptions pipelineOptions) {
       int exponent = 63;
-      long numSplits = 10;
+      long numSplits = 1;
       long startToken, endToken = 0L;
       List<BoundedSource<T>> sourceList = new ArrayList<>();
       try {
-        if (desiredBundleSizeBytes > 0) {
+        if (desiredBundleSizeBytes > 0 && getEstimatedSizeBytes(pipelineOptions) > 0) {
           numSplits = getEstimatedSizeBytes(pipelineOptions) / desiredBundleSizeBytes;
         }
       } catch (Exception e) {
-        // fallback to 10
-        numSplits = 10;
+        // fallback to 1
+        numSplits = 1;
       }
 
       if (numSplits <= 0) {
@@ -356,7 +361,7 @@ public class CassandraIO {
 
   private static class BoundedCassandraReader<T> extends BoundedSource.BoundedReader<T> {
 
-    private final BoundedCassandraSource source;
+    private final BoundedCassandraSource<T> source;
 
     private Cluster cluster;
     private Session session;
@@ -364,13 +369,13 @@ public class CassandraIO {
     private Iterator<T> iterator;
     private T current;
 
-    public BoundedCassandraReader(BoundedCassandraSource source) {
+    public BoundedCassandraReader(BoundedCassandraSource<T> source) {
       this.source = source;
     }
 
     @Override
     public boolean start() {
-      Read spec = source.spec;
+      Read spec = this.source.spec;
       cluster = spec.getConnectionConfiguration().getCluster();
       session = cluster.connect();
       resultSet = session.execute(spec.getQuery());
@@ -432,152 +437,49 @@ public class CassandraIO {
     }
 
     public Write<T> withConnectionConfiguration(ConnectionConfiguration connectionConfiguration) {
-      checkNotNull(connectionConfiguration, "connectionConfiguration");
+      checkArgument(connectionConfiguration != null, "CassandraIO.write()"
+          + ".withConnectionConfiguration(configuration) called with null configuration");
       return builder().setConnectionConfiguration(connectionConfiguration).build();
     }
 
-    public PDone apply(PCollection<T> input) {
-      Pipeline pipeline = input.getPipeline();
-      CassandraWriteOperation<T> operation = new CassandraWriteOperation<T>(this);
-
-      Coder<CassandraWriteOperation<T>> coder =
-          (Coder<CassandraWriteOperation<T>>) SerializableCoder.of(operation.getClass());
-
-      PCollection<CassandraWriteOperation<T>> collection =
-          pipeline.apply(Create.<CassandraWriteOperation<T>> of(operation).withCoder(coder));
-
-      final PCollectionView<CassandraWriteOperation<T>> view =
-          collection.apply(View.<CassandraWriteOperation<T>>asSingleton());
-
-      PCollection<Void> results = input.apply(ParDo.of(new DoFn<T, Void>() {
-
-        private CassandraWriter<T> writer = null;
-
-        @ProcessElement
-        public void processElement(ProcessContext c) throws Exception {
-          if (writer == null) {
-            CassandraWriteOperation<T> operation = c.sideInput(view);
-            writer = operation.createWriter();
-          }
-
-          try {
-            writer.write(c.element());
-          } catch (Exception e) {
-            try {
-              writer.flush();
-            } catch (Exception ec) {
-              // nothing to do
-            }
-            throw e;
-          }
-        }
-
-        @FinishBundle
-        public void finishBundle(Context c) throws Exception {
-          if (writer != null) {
-            writer.flush();
-          }
-        }
-
-      }).withSideInputs(view));
-
-      PCollectionView<Iterable<Void>> voidView = results.apply(View.<Void> asIterable());
-
-      collection.apply("Cassandra Write", ParDo.of(new DoFn<CassandraWriteOperation<T>, Void>() {
-
-        @ProcessElement
-        public void processElement(ProcessContext c) {
-          // TODO could be implemented per bundle directly in the DoFn
-          CassandraWriteOperation<T> operation = c.element();
-          operation.finalize();
-        }
-
-      }).withSideInputs(voidView));
-
-      return PDone.in(pipeline);
+    @Override
+    public PDone expand(PCollection<T> input) {
+      input.apply(ParDo.of(new WriteFn<T>(this)));
+      return PDone.in(input.getPipeline());
     }
 
   }
 
-  private static class CassandraWriteOperation<T> implements Serializable {
+  private static class WriteFn<T> extends DoFn<T, Void> {
 
-    private Write spec;
+    private final Write<T> spec;
 
     private transient Cluster cluster;
     private transient Session session;
     private transient MappingManager mappingManager;
 
-    private synchronized Session getSession() {
-      if (session == null) {
-        cluster = spec.getConnectionConfiguration().getCluster();
-        session = cluster.connect(spec.getConnectionConfiguration().getKeyspace());
-      }
-      return session;
-    }
-
-    private synchronized MappingManager getMappingManager() {
-      if (mappingManager == null) {
-        Session session = getSession();
-        mappingManager = new MappingManager(session);
-      }
-      return mappingManager;
-    }
-
-    public CassandraWriteOperation(Write<T> spec) {
+    public WriteFn(Write<T> spec) {
       this.spec = spec;
     }
 
-    public CassandraWriter<T> createWriter() {
-      return new CassandraWriter<T>(this, getMappingManager());
+    @Setup
+    public void setup() throws Exception {
+      cluster = spec.getConnectionConfiguration().getCluster();
+      session = cluster.connect(spec.getConnectionConfiguration().getKeyspace());
+      mappingManager = new MappingManager(session);
     }
 
-    protected void finalize() {
+    @ProcessElement
+    public void processElement(ProcessContext context) throws Exception {
+      T entity = context.element();
+      Mapper<T> mapper = (Mapper<T>) mappingManager.mapper(entity.getClass());
+      mapper.save(entity);
+    }
+
+    @Teardown
+    public void teardown() throws Exception {
       session.close();
       cluster.close();
-    }
-
-  }
-
-  private static class CassandraWriter<T> {
-
-    private static int batchSize = 20000;
-    private final CassandraWriteOperation operation;
-    private final MappingManager mappingManager;
-    private final List<ListenableFuture<Void>> results = new ArrayList<>();
-    private Mapper<T> mapper;
-
-    public CassandraWriter(CassandraWriteOperation operation, MappingManager mappingManager) {
-      this.operation = operation;
-      this.mappingManager = mappingManager;
-    }
-
-    public void flush() {
-      for (ListenableFuture<Void> result : results) {
-        try {
-          Uninterruptibles.getUninterruptibly(result);
-        } catch (ExecutionException e) {
-          if (e.getCause() instanceof DriverException) {
-            throw ((DriverException) e.getCause()).copy();
-          } else {
-            throw new DriverInternalError("Unexpected exception throws", e.getCause());
-          }
-        }
-      }
-      results.clear();
-    }
-
-    public CassandraWriteOperation getOperation() {
-      return operation;
-    }
-
-    public void write(T entity) {
-      if (mapper == null) {
-        mapper = (Mapper<T>) mappingManager.mapper(entity.getClass());
-      }
-      if (results.size() >= batchSize) {
-        flush();
-      }
-      results.add(mapper.saveAsync((T) entity));
     }
 
   }
