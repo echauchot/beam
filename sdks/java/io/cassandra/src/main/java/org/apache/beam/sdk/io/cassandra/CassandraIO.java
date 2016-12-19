@@ -51,6 +51,8 @@ import org.apache.beam.sdk.values.PCollection;
 import org.apache.beam.sdk.values.PDone;
 
 import org.joda.time.Instant;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * An IO to read and write on Apache Cassandra.
@@ -100,6 +102,8 @@ import org.joda.time.Instant;
  * }</pre>
  */
 public class CassandraIO {
+
+  private static final Logger LOG = LoggerFactory.getLogger(CassandraIO.class);
 
   public static <T> Read<T> read() {
     return new AutoValue_CassandraIO_Read.Builder<T>().build();
@@ -153,6 +157,7 @@ public class CassandraIO {
     }
 
     Cluster getCluster() {
+      LOG.debug("Connecting to Cassandra cluster");
       return Cluster.builder().addContactPoints(getHosts().toArray(new String[0])).withPort
           (getPort())
           .build();
@@ -302,6 +307,8 @@ public class CassandraIO {
             meanPartitionSize = row.getLong("mean_partition_size");
           }
 
+          LOG.debug("Cassandra table {} (keyspace {}) estimated to {} bytes", spec.getTable(),
+              spec.getConnectionConfiguration().getKeyspace(), partitionsCount * meanPartitionSize);
           return partitionsCount * meanPartitionSize;
         }
       }
@@ -326,6 +333,8 @@ public class CassandraIO {
       if (numSplits <= 0) {
         numSplits = 1;
       }
+
+      LOG.debug("Number of splits is {}", numSplits);
 
       if (numSplits == 1) {
         sourceList.add(this);
@@ -375,6 +384,7 @@ public class CassandraIO {
 
     @Override
     public boolean start() {
+      LOG.debug("Starting Cassandra reader");
       Read spec = this.source.spec;
       cluster = spec.getConnectionConfiguration().getCluster();
       session = cluster.connect();
@@ -397,6 +407,7 @@ public class CassandraIO {
 
     @Override
     public void close() {
+      LOG.debug("Closing Cassandra reader");
       session.close();
       cluster.close();
     }
@@ -464,6 +475,7 @@ public class CassandraIO {
 
     @Setup
     public void setup() throws Exception {
+      LOG.debug("Starting Cassandra writer");
       cluster = spec.getConnectionConfiguration().getCluster();
       session = cluster.connect(spec.getConnectionConfiguration().getKeyspace());
       mappingManager = new MappingManager(session);
@@ -478,6 +490,7 @@ public class CassandraIO {
 
     @Teardown
     public void teardown() throws Exception {
+      LOG.debug("Closing Cassandra writer");
       session.close();
       cluster.close();
     }

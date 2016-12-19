@@ -17,6 +17,8 @@
  */
 package org.apache.beam.sdk.io.cassandra;
 
+import static org.junit.Assert.assertEquals;
+
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.Row;
@@ -25,7 +27,9 @@ import com.datastax.driver.mapping.annotations.Column;
 import com.datastax.driver.mapping.annotations.Table;
 
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.coders.SerializableCoder;
@@ -34,13 +38,14 @@ import org.apache.beam.sdk.testing.PAssert;
 import org.apache.beam.sdk.testing.TestPipeline;
 import org.apache.beam.sdk.transforms.Count;
 import org.apache.beam.sdk.transforms.Create;
-import org.apache.beam.sdk.transforms.DoFn;
-import org.apache.beam.sdk.transforms.ParDo;
+import org.apache.beam.sdk.transforms.MapElements;
+import org.apache.beam.sdk.transforms.SerializableFunction;
+import org.apache.beam.sdk.transforms.SimpleFunction;
+import org.apache.beam.sdk.values.KV;
 import org.apache.beam.sdk.values.PCollection;
 
 import org.cassandraunit.utils.EmbeddedCassandraServerHelper;
 import org.junit.After;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
@@ -86,16 +91,23 @@ public class CassandraIOTest implements Serializable {
     session.execute("USE " + CASSANDRA_KEYSPACE);
 
     try {
-      LOGGER.info("Create Cassandra table");
+      LOGGER.info("Create Cassandra tables");
       session.execute("CREATE TABLE person(person_id int, person_name text, PRIMARY KEY"
+          + "(person_id));");
+      session.execute("CREATE TABLE scientist(person_id int, person_name text, PRIMARY KEY"
           + "(person_id));");
     } catch (Exception e) {
       // nothing to do
     }
 
     LOGGER.info("Insert records");
-    session.execute("INSERT INTO person(person_id, person_name) values(0, 'John Foo');");
-    session.execute("INSERT INTO person(person_id, person_name) values(1, 'David Bar');");
+    String[] scientists = {"Einstein", "Darwin", "Copernicus", "Pasteur", "Curie", "Faraday",
+        "Newton", "Bohr", "Galilei", "Maxwell"};
+    for (int i = 0; i < 1000; i++) {
+      int index = i % scientists.length;
+      session.execute("INSERT INTO scientist(person_id, person_name) values(" + i + ", '"
+          + scientists[index] + "');");
+    }
   }
 
   @After
@@ -109,28 +121,39 @@ public class CassandraIOTest implements Serializable {
     Pipeline pipeline = TestPipeline.create();
 
     // read from Cassandra
-    PCollection<Person> read = pipeline.apply(CassandraIO.<Person>read()
+    PCollection<Scientist> output = pipeline.apply(CassandraIO.<Scientist>read()
         .withConnectionConfiguration(
             CassandraIO.ConnectionConfiguration.create(
                 Arrays.asList(CASSANDRA_HOST),
                 CASSANDRA_KEYSPACE,
                 9042))
         .withTable(CASSANDRA_TABLE)
-        .withEntityName(Person.class)
+        .withEntityName(Scientist.class)
         .withRowKey("person_id")
-        .withQuery("select * from " + CASSANDRA_KEYSPACE + ".person")
-        .withCoder(SerializableCoder.of(Person.class)));
+        .withQuery("select * from " + CASSANDRA_KEYSPACE + ".scientist")
+        .withCoder(SerializableCoder.of(Scientist.class)));
 
-    read.apply(ParDo.of(new DoFn<Person, Person>() {
-      @ProcessElement
-      public void processElement(ProcessContext context) {
-        Person person = context.element();
-        System.out.println(person.toString());
-        context.output(person);
+    PAssert.thatSingleton(output.apply("Count All", Count.<Scientist>globally())).isEqualTo(1000L);
+
+    PCollection<KV<String, Integer>> mapped =
+        output.apply(MapElements.via(new SimpleFunction<Scientist, KV<String, Integer>>() {
+          public KV<String, Integer> apply(Scientist input) {
+            KV<String, Integer> kv = KV.of(input.getName(), input.getId());
+            return kv;
+          }
+        }));
+
+    PAssert.that(mapped
+        .apply("Count Scientist", Count.<String, Integer>perKey())
+    ).satisfies(new SerializableFunction<Iterable<KV<String, Long>>, Void>() {
+      @Override
+      public Void apply(Iterable<KV<String, Long>> input) {
+        for (KV<String, Long> element : input) {
+          assertEquals(element.getKey(), 100L, element.getValue().longValue());
+        }
+        return null;
       }
-    }));
-
-    PAssert.thatSingleton(read.apply("Count", Count.<Person>globally())).isEqualTo(2L);
+    });
 
     pipeline.run();
   }
@@ -140,21 +163,29 @@ public class CassandraIOTest implements Serializable {
   public void testWrite() throws Exception {
     Pipeline pipeline = TestPipeline.create();
 
-    Person person = new Person();
-    person.setName("Beam Test");
+    ArrayList<Person> data = new ArrayList<>();
+    for (int i = 0; i < 1000; i++) {
+      Person person = new Person();
+      person.setId(i);
+      person.setName("Beam Test");
+      data.add(person);
+    }
 
-    pipeline.apply(Create.of(person)).apply(
+    pipeline.apply(Create.of(data)).apply(
         CassandraIO.<Person>write()
             .withConnectionConfiguration(CassandraIO.ConnectionConfiguration.create(
                 Arrays.asList(CASSANDRA_HOST),
                 CASSANDRA_KEYSPACE,
                 9042
             )));
+    pipeline.run();
 
-    ResultSet result = session.execute("select * from " + CASSANDRA_KEYSPACE + ".person where "
-        + "person_name = 'Beam Test' ALLOW FILTERING");
-    for (Row row : result.all()) {
-      Assert.assertEquals("Beam Test", row.getString("person_name"));
+    ResultSet result = session.execute("select person_id,person_name from "
+        + CASSANDRA_KEYSPACE + ".person");
+    List<Row> results = result.all();
+    assertEquals(1000, results.size());
+    for (Row row : results) {
+      assertEquals("Beam Test", row.getString("person_name"));
     }
   }
 
@@ -189,6 +220,14 @@ public class CassandraIOTest implements Serializable {
     public String toString() {
       return id + ":" + name;
     }
+
+  }
+
+  /**
+   * Another simple Cassandra entity on a different table.
+   */
+  @Table(name = "scientist", keyspace = CASSANDRA_KEYSPACE)
+  public static class Scientist extends Person {
 
   }
 
