@@ -31,6 +31,7 @@
   <description>IO to read and write with Apache Cassandra database</description>
 
   <properties>
+    <compiler.error.flag></compiler.error.flag>
     <cassandra.driver.version>3.1.2</cassandra.driver.version>
   </properties>
 
@@ -39,6 +40,24 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <source>1.7</source>
+          <target>1.7</target>
+          <compilerArgs>
+            <arg>-Xlint:all</arg>
+            <arg>-Xlint:-options</arg>
+            <arg>-Xlint:-cast</arg>
+            <arg>-Xlint:-deprecation</arg>
+            <arg>-Xlint:-processing</arg>
+            <arg>-Xlint:-rawtypes</arg>
+            <arg>-Xlint:-serial</arg>
+            <arg>-Xlint:-try</arg>
+            <arg>-Xlint:-unchecked</arg>
+            <arg>-Xlint:-varargs</arg>
+          </compilerArgs>
+          <showWarnings>true</showWarnings>
+          <showDeprecation>false</showDeprecation>
+        </configuration>
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
