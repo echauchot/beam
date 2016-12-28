@@ -56,7 +56,7 @@
             <arg>-Xlint:-varargs</arg>
           </compilerArgs>
           <showWarnings>true</showWarnings>
-          <showDeprecation>false</showDeprecation>
+          <showDeprecation>true</showDeprecation>
         </configuration>
       </plugin>
       <plugin>
@@ -184,7 +184,7 @@
 
   <profiles>
     <profile>
-      <!-- Skip tests on Java7 as Cassandra requires Java8 -->
+      <!-- Skip tests on Java7 as Cassandra embedded instance used in the tests requires Java8 -->
       <id>java7</id>
       <activation>
         <jdk>1.7</jdk>

@@ -71,7 +71,7 @@ import org.slf4j.LoggerFactory;
  *
  * pipeline.apply(CassandraIO.<Person>read()
  *     .withConnectionConfiguration(CassandraIO.ConnectionConfiguration.create(
- *        Arrays.asList("host1", "host1"),
+ *        Arrays.asList("host1", "host2"),
  *        9042,
  *        "beam"))
  *     .withQuery("select * from Person")
@@ -158,9 +158,8 @@ public class CassandraIO {
 
     Cluster getCluster() {
       LOG.debug("Connecting to Cassandra cluster");
-      return Cluster.builder().addContactPoints(getHosts().toArray(new String[0])).withPort
-          (getPort())
-          .build();
+      return Cluster.builder().addContactPoints(getHosts().toArray(new String[0]))
+          .withPort(getPort()).build();
     }
   }
 
@@ -261,7 +260,7 @@ public class CassandraIO {
 
   private static class BoundedCassandraSource<T> extends BoundedSource<T> {
 
-    private Read<T> spec;
+    private final Read<T> spec;
     private String splitQuery;
 
     BoundedCassandraSource(Read<T> spec, String splitQuery) {
@@ -277,11 +276,6 @@ public class CassandraIO {
     @Override
     public void validate() {
       spec.validate(null);
-    }
-
-    @Override
-    public boolean producesSortedKeys(PipelineOptions pipelineOptions) {
-      return false;
     }
 
     @Override
@@ -306,6 +300,8 @@ public class CassandraIO {
             partitionsCount = row.getLong("partitions_count");
             meanPartitionSize = row.getLong("mean_partition_size");
           }
+          // TODO use factor from cassandra system table to estimate the size on the whole cluster
+          // and not on the single node as it is right now
 
           LOG.debug("Cassandra table {} (keyspace {}) estimated to {} bytes", spec.getTable(),
               spec.getConnectionConfiguration().getKeyspace(), partitionsCount * meanPartitionSize);
@@ -401,6 +397,7 @@ public class CassandraIO {
         current = iterator.next();
         return true;
       } else {
+        current = null;
         return false;
       }
     }
@@ -408,8 +405,12 @@ public class CassandraIO {
     @Override
     public void close() {
       LOG.debug("Closing Cassandra reader");
-      session.close();
-      cluster.close();
+      if (session != null) {
+        session.close();
+      }
+      if (cluster != null) {
+        cluster.close();
+      }
     }
 
     @Override
@@ -491,8 +492,12 @@ public class CassandraIO {
     @Teardown
     public void teardown() throws Exception {
       LOG.debug("Closing Cassandra writer");
-      session.close();
-      cluster.close();
+      if (session != null) {
+        session.close();
+      }
+      if (cluster != null) {
+        cluster.close();
+      }
     }
 
   }
