@@ -1,3 +1,21 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.beam.sdk.io.cassandra;
 
 import com.datastax.driver.core.Cluster;
@@ -17,32 +35,6 @@ import java.util.logging.Logger;
  * as a library in Cassandra. So it is coded manually, similarly to cassandra spark connector.
  */
 public class DataSizeEstimates {
-
-  static class Partitioner{
-    BigInteger minToken;
-    BigInteger maxToken;
-
-    Partitioner(Cluster cluster){
-      String partitionerName = cluster.getMetadata().getPartitioner();
-      switch (partitionerName){
-        case "org.apache.cassandra.dht.Murmur3Partitioner":
-          minToken = new BigInteger(String.valueOf(Long.MIN_VALUE));
-          maxToken = new BigInteger(String.valueOf(Long.MAX_VALUE));
-          break;
-        case "org.apache.cassandra.dht.RandomPartitioner":
-          minToken = new BigInteger("-1");
-          maxToken = new BigInteger(String.valueOf((long) Math.pow(2, 127)));
-          break;
-        default:
-          minToken = new BigInteger(String.valueOf(Long.MIN_VALUE));
-          maxToken = new BigInteger(String.valueOf(Long.MAX_VALUE));
-          break;
-      }
-    }
-    BigInteger getTotalTokens(){
-      return maxToken.subtract(minToken);
-    }
-  }
 
   private static final Logger logger = Logger.getLogger(CassandraIO.class.getName());
 
@@ -96,44 +88,45 @@ public class DataSizeEstimates {
   //compatible Cassandra > 2.1.5
   private static List<TokenRange> getTokenRanges(
       Cluster cluster, CassandraIO.ConnectionConfiguration connectionConfiguration, String table) {
-      try (Session session = cluster.newSession()) {
-        ResultSet resultSet =
-            session.execute(
-                "SELECT range_start, range_end, partitions_count, mean_partition_size FROM "
-                    + "system.size_estimates WHERE keyspace_name = ? AND table_name = ?",
-                connectionConfiguration.getKeyspace(),
-                table);
+    try (Session session = cluster.newSession()) {
+      ResultSet resultSet =
+          session.execute(
+              "SELECT range_start, range_end, partitions_count, mean_partition_size FROM "
+                  + "system.size_estimates WHERE keyspace_name = ? AND table_name = ?",
+              connectionConfiguration.getKeyspace(),
+              table);
 
-        ArrayList<TokenRange> tokenRanges = new ArrayList<>();
-        for (Row row : resultSet) {
-          TokenRange tokenRange =
-              new TokenRange(
-                  row.getLong("partitions_count"),
-                  row.getLong("mean_partition_size"),
-                  row.getString("range_start"),
-                  row.getString("range_end"));
-          tokenRanges.add(tokenRange);
-        }
-        // The table may not contain the estimates yet
-        // or have partitions_count and mean_partition_size fields = 0
-        // if the data was just inserted and the amount of data in the table was small.
-        // This is very common situation during tests,
-        // when we insert a few rows and immediately query them. However, for tiny data sets the lack
-        // of size estimates is not a problem at all, because we don't want to split tiny data anyways.
-        // Therefore, we're not issuing a warning if the result set was empty
-        // or mean_partition_size and partitions_count = 0.
-        return tokenRanges;
-      } catch (InvalidQueryException e) {
-        logger.log(
-            Level.INFO,
-            "Failed to fetch size estimates for $keyspaceName.$tableName "
-                + "from system.size_estimates table. "
-                + "The number of created bundles may be inaccurate. "
-                + "Please make sure you use Cassandra 2.1.5 or newer.");
-        ArrayList<TokenRange> tokenRanges = new ArrayList<>();
-        tokenRanges.add(new TokenRange(0L, 0L, "0", "0"));
-        return tokenRanges;
+      ArrayList<TokenRange> tokenRanges = new ArrayList<>();
+      for (Row row : resultSet) {
+        TokenRange tokenRange =
+            new TokenRange(
+                row.getLong("partitions_count"),
+                row.getLong("mean_partition_size"),
+                row.getString("range_start"),
+                row.getString("range_end"));
+        tokenRanges.add(tokenRange);
       }
+      // The table may not contain the estimates yet
+      // or have partitions_count and mean_partition_size fields = 0
+      // if the data was just inserted and the amount of data in the table was small.
+      // This is very common situation during tests,
+      // when we insert a few rows and immediately query them.
+      // However, for tiny data sets the lack of size estimates is not a problem at all,
+      // because we don't want to split tiny data anyways.
+      // Therefore, we're not issuing a warning if the result set was empty
+      // or mean_partition_size and partitions_count = 0.
+      return tokenRanges;
+    } catch (InvalidQueryException e) {
+      logger.log(
+          Level.INFO,
+          "Failed to fetch size estimates for $keyspaceName.$tableName "
+              + "from system.size_estimates table. "
+              + "The number of created bundles may be inaccurate. "
+              + "Please make sure you use Cassandra 2.1.5 or newer.");
+      ArrayList<TokenRange> tokenRanges = new ArrayList<>();
+      tokenRanges.add(new TokenRange(0L, 0L, "0", "0"));
+      return tokenRanges;
+    }
   }
 
   /**
@@ -151,6 +144,33 @@ public class DataSizeEstimates {
       return token2.subtract(token1);
     } else {
       return token2.subtract(token1).add(partitioner.getTotalTokens());
+    }
+  }
+
+  static class Partitioner {
+    BigInteger minToken;
+    BigInteger maxToken;
+
+    Partitioner(Cluster cluster) {
+      String partitionerName = cluster.getMetadata().getPartitioner();
+      switch (partitionerName) {
+        case "org.apache.cassandra.dht.Murmur3Partitioner":
+          minToken = new BigInteger(String.valueOf(Long.MIN_VALUE));
+          maxToken = new BigInteger(String.valueOf(Long.MAX_VALUE));
+          break;
+        case "org.apache.cassandra.dht.RandomPartitioner":
+          minToken = new BigInteger("-1");
+          maxToken = new BigInteger(String.valueOf((long) Math.pow(2, 127)));
+          break;
+        default:
+          minToken = new BigInteger(String.valueOf(Long.MIN_VALUE));
+          maxToken = new BigInteger(String.valueOf(Long.MAX_VALUE));
+          break;
+      }
+    }
+
+    BigInteger getTotalTokens() {
+      return maxToken.subtract(minToken);
     }
   }
 

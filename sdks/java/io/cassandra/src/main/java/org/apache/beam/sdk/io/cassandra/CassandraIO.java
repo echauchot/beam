@@ -17,6 +17,9 @@
  */
 package org.apache.beam.sdk.io.cassandra;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.Session;
@@ -45,24 +48,20 @@ import org.joda.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkState;
-
 /**
  * An IO to read and write on Apache Cassandra.
  *
  * <h3>Reading from Apache Cassandra</h3>
  *
  * <p>CassandraIO provides a source to read and returns a bounded collection of entities as {@code
- * PCollection<Entity>}.
- * An entity is built by Cassandra mapper based on a POJO containing annotations.
+ * PCollection<Entity>}. An entity is built by Cassandra mapper based on a POJO containing
+ * annotations.
  *
  * <p>To configure a Cassandra source, you have to provide the hosts, port, and keyspace of the
- * Cassandra instance, wrapped as a {@link ConnectionConfiguration}.
- * The following example illustrate various options for configuring the IO:
+ * Cassandra instance, wrapped as a {@link ConnectionConfiguration}. The following example
+ * illustrate various options for configuring the IO:
  *
  * <pre>{@code
- *
  * pipeline.apply(CassandraIO.<Person>read()
  *     .withConnectionConfiguration(CassandraIO.ConnectionConfiguration.create(
  *        Arrays.asList("host1", "host2"),
@@ -76,14 +75,13 @@ import static com.google.common.base.Preconditions.checkState;
  *
  * <h3>Writing to Apache Cassandra</h3>
  *
- * <p>CassandraIO write provides a sink to write to Apache Cassandra. It expects a
- * {@code PCollection} of entities that will be mapped and written in Cassandra.
+ * <p>CassandraIO write provides a sink to write to Apache Cassandra. It expects a {@code
+ * PCollection} of entities that will be mapped and written in Cassandra.
  *
- * <p>To configure the write, you have to specify hosts, port, keyspace wrapped as a
- * {@link ConnectionConfiguration} and the entity:
+ * <p>To configure the write, you have to specify hosts, port, keyspace wrapped as a {@link
+ * ConnectionConfiguration} and the entity:
  *
  * <pre>{@code
- *
  * pipeline
  *     .apply(...) // provides PCollection<Person>
  *     .apply(CassandraIO.<Person>write()
@@ -94,7 +92,8 @@ import static com.google.common.base.Preconditions.checkState;
  *        .withEntityName(Person.class);
  *
  * }</pre>
- */public class CassandraIO {
+ */
+public class CassandraIO {
 
   private static final Logger LOG = LoggerFactory.getLogger(CassandraIO.class);
 
@@ -247,8 +246,8 @@ import static com.google.common.base.Preconditions.checkState;
           getQuery() != null,
           "CassandraIO.read() requires a query to be set via " + "withQuery(query)");
       checkState(
-        getRowKey() != null,
-        "CassandraIO.read() requires a rowKey to be set via " + "withRowkey(rowKey)");
+          getRowKey() != null,
+          "CassandraIO.read() requires a rowKey to be set via " + "withRowkey(rowKey)");
       checkState(
           getEntityName() != null,
           "CassandraIO.read() requires an entity name to be set "
@@ -396,7 +395,7 @@ import static com.google.common.base.Preconditions.checkState;
       //TODO mix source.getquery (= split Query)
       resultSet = session.execute(spec.getQuery());
       final MappingManager mappingManager = new MappingManager(session);
-      Mapper mapper = (Mapper) mappingManager.mapper(spec.getEntityName());
+      Mapper mapper = mappingManager.mapper(spec.getEntityName());
       iterator = mapper.map(resultSet).iterator();
       return advance();
     }
