@@ -181,9 +181,6 @@ public class CassandraIOTest implements Serializable {
     session.execute(String.format("TRUNCATE TABLE %s.%s", CASSANDRA_KEYSPACE, CASSANDRA_TABLE));
   }
 
-  /* TODO fails because, right now split query is ignored, so when the splitIntoBundles creates
-  n sources, it duplicates dataset by n
-   */
   @Test
   public void testEstimatedSize() throws Exception {
     PipelineOptions options = PipelineOptionsFactory.create();
