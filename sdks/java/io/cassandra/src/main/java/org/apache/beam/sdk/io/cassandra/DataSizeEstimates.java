@@ -180,7 +180,7 @@ public class DataSizeEstimates {
     private BigInteger rangeStart;
     private BigInteger rangeEnd;
 
-    public TokenRange(
+    private TokenRange(
         long partitionCount, long meanPartitionSize, String rangeStart, String rangeEnd) {
       this.partitionCount = partitionCount;
       this.meanPartitionSize = meanPartitionSize;

@@ -78,8 +78,8 @@ public class CassandraIOTest implements Serializable {
   private static final String JMX_PORT = "7199";
   private static final long SIZE_ESTIMATES_UPDATE_INTERVAL = 5000L;
   private static final long STARTUP_TIMEOUT = 45000L;
-  private static transient Cluster cluster;
-  private static transient Session session;
+  private static Cluster cluster;
+  private static Session session;
   private static long startupTime;
   private CassandraIO.ConnectionConfiguration connectionConfiguration =
       CassandraIO.ConnectionConfiguration.create(
@@ -248,8 +248,6 @@ public class CassandraIOTest implements Serializable {
                 .withQuery(
                     String.format("select * from %s.%s", CASSANDRA_KEYSPACE, CASSANDRA_TABLE))
                 .withCoder(SerializableCoder.of(Scientist.class)));
-
-    //fails because there is no split (splitQuery is ignored) s
     PAssert.thatSingleton(output.apply("Count scientists", Count.<Scientist>globally()))
         .isEqualTo(NUM_ROWS);
 
@@ -273,7 +271,6 @@ public class CassandraIOTest implements Serializable {
                 return null;
               }
             });
-
     pipeline.run();
   }
 

@@ -353,7 +353,7 @@ public class CassandraIO {
       endToken = startRange;
       BigInteger incrementValue =
           (endRange.subtract(startRange)).divide(new BigInteger(String.valueOf(numSplits)));
-      String splitQuery = null;
+      String splitQuery;
       for (int splitCount = 1; splitCount <= numSplits; splitCount++) {
         startToken = endToken;
         endToken = startToken.add(incrementValue);
@@ -382,7 +382,7 @@ public class CassandraIO {
     private Iterator<T> iterator;
     private T current;
 
-    public BoundedCassandraReader(BoundedCassandraSource<T> source) {
+    private BoundedCassandraReader(BoundedCassandraSource<T> source) {
       this.source = source;
     }
 
@@ -392,7 +392,7 @@ public class CassandraIO {
       Read spec = this.source.spec;
       cluster = spec.getConnectionConfiguration().getCluster();
       session = cluster.connect();
-      //TODO mix source.getquery (= split Query)
+      //TODO mix spec.getQuery() and source.getquery (= split Query)
       resultSet = session.execute(spec.getQuery());
       final MappingManager mappingManager = new MappingManager(session);
       Mapper mapper = mappingManager.mapper(spec.getEntityName());
