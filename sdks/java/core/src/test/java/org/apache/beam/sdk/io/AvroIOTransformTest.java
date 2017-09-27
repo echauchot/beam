@@ -270,6 +270,7 @@ public class AvroIOTransformTest {
   public static class AvroIOWriteTransformTest extends AvroIOTransformTest {
 
     private static final String WRITE_TRANSFORM_NAME = "AvroIO.Write";
+    private static final String OUTPUT_FILE = "file.avro";
 
     private List<AvroGeneratedUser> readAvroFile(final File avroFile) throws IOException {
       final DatumReader<AvroGeneratedUser> userDatumReader =
@@ -358,10 +359,13 @@ public class AvroIOTransformTest {
     // to have dynamic schemas).
     class GenericRecordAvroDestinations
         extends DynamicAvroDestinations<GenericRecord, Void, GenericRecord> {
-      ResourceId baseDir;
+
+      FileBasedSink.FilenamePolicy  filenamePolicy;
       private final PCollectionView<Schema> schemaView;
-      public GenericRecordAvroDestinations(ResourceId baseDir, PCollectionView<Schema> schemaView) {
+
+      public GenericRecordAvroDestinations(FileBasedSink.FilenamePolicy filenamePolicy, PCollectionView<Schema> schemaView) {
         this.schemaView = schemaView;
+        this.filenamePolicy = filenamePolicy;
       }
       public List<PCollectionView<?>> getSideInputs() {
         return ImmutableList.<PCollectionView<?>>of(schemaView);
@@ -384,12 +388,7 @@ public class AvroIOTransformTest {
 
       @Override
       public FileBasedSink.FilenamePolicy getFilenamePolicy(Void destination) {
-        return DefaultFilenamePolicy.fromStandardParameters(
-            ValueProvider.StaticValueProvider.of(
-                baseDir.resolve("file.avro", RESOLVE_FILE)),
-            null,
-            null,
-            false);
+        return filenamePolicy;
       }
 
       @Override
@@ -401,7 +400,6 @@ public class AvroIOTransformTest {
     @Test
     @Category(NeedsRunner.class)
     public void testWriteGenericRecords() throws Exception {
-      final File avroFile = tmpFolder.newFile("file.avro");
       GenericRecord[] genericRecords = generateAvroGenericRecords();
       @SuppressWarnings("unchecked") final
       PCollection<GenericRecord> input = pipeline.apply(Create.of(Arrays.asList(genericRecords)).withCoder(AvroCoder.of(SCHEMA)));
@@ -415,12 +413,12 @@ public class AvroIOTransformTest {
             }
           }));
       PCollectionView<Schema> sideInput = schemaPCollection.apply(View.<Schema>asSingleton());
-      ResourceId baseDir =
-          FileSystems.matchNewResource(
-              Files.createTempDirectory(tmpFolder.getRoot().toPath(), "")
-                  .toString(),
-              true);
-      input.apply(AvroIO.<GenericRecord>writeCustomTypeToGenericRecords().to(new GenericRecordAvroDestinations(baseDir, sideInput)));
+      File avroFile = tmpFolder.newFile(OUTPUT_FILE);
+      ResourceId fileResourceId = FileSystems.matchNewResource(avroFile.getPath(), false);
+      DefaultFilenamePolicy filenamePolicy = DefaultFilenamePolicy.fromStandardParameters(
+          ValueProvider.StaticValueProvider.of(fileResourceId), null,
+          null, false);
+      input.apply(AvroIO.<GenericRecord>writeCustomTypeToGenericRecords().to(new GenericRecordAvroDestinations(filenamePolicy, sideInput)));
       pipeline.run();
       assertThat(readAvroFileWithGenericRecords(avroFile), containsInAnyOrder(genericRecords));
     }
