@@ -96,20 +96,6 @@ public class AvroIOTransformTest {
 
   private static final Schema SCHEMA = parser.parse(SCHEMA_STRING);
 
-
-  private static final String SCHEMA_STRING2 =
-      "{\"namespace\": \"example.avro\",\n"
-          + " \"type\": \"record\",\n"
-          + " \"name\": \"AvroGeneratedUser\",\n"
-          + " \"fields\": [\n"
-          + "     {\"name\": \"name\", \"type\": \"string\"},\n"
-          + "     {\"name\": \"favorite_number\", \"type\": [\"int\", \"null\"]}\n"
-          + " ]\n"
-          + "}";
-
-  private static final Schema SCHEMA2 = new Schema.Parser().parse(SCHEMA_STRING2);
-
-
   private static AvroGeneratedUser[] generateAvroObjects() {
     final AvroGeneratedUser user1 = new AvroGeneratedUser();
     user1.setName("Bob");
