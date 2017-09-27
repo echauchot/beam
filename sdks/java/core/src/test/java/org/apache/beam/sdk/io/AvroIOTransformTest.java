@@ -386,7 +386,7 @@ public class AvroIOTransformTest {
       public FileBasedSink.FilenamePolicy getFilenamePolicy(Void destination) {
         return DefaultFilenamePolicy.fromStandardParameters(
             ValueProvider.StaticValueProvider.of(
-                baseDir.resolve("avro.txt", RESOLVE_FILE)),
+                baseDir.resolve("file.avro", RESOLVE_FILE)),
             null,
             null,
             false);
@@ -417,7 +417,7 @@ public class AvroIOTransformTest {
       PCollectionView<Schema> sideInput = schemaPCollection.apply(View.<Schema>asSingleton());
       ResourceId baseDir =
           FileSystems.matchNewResource(
-              Files.createTempDirectory(tmpFolder.getRoot().toPath(), "testWriteGenericRecords")
+              Files.createTempDirectory(tmpFolder.getRoot().toPath(), "")
                   .toString(),
               true);
       input.apply(AvroIO.<GenericRecord>writeCustomTypeToGenericRecords().to(new GenericRecordAvroDestinations(baseDir, sideInput)));
