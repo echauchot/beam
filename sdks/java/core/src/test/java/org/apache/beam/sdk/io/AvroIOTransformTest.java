@@ -354,9 +354,8 @@ public class AvroIOTransformTest {
     }
 
     // This is the user class that controls dynamic destinations for this avro write. The input to
-    // AvroIO.Write will be UserEvent, and we will be writing GenericRecords to the file (in order
-    // to have dynamic schemas). Everything is per userid, so we define a dynamic destination type
-    // of Integer.
+    // AvroIO.Write will be GenericRecord, and we will be writing GenericRecords to the file (in order
+    // to have dynamic schemas).
     class GenericRecordAvroDestinations
         extends DynamicAvroDestinations<GenericRecord, Void, GenericRecord> {
       ResourceId baseDir;
