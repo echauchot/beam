@@ -361,9 +361,9 @@ public class AvroIOTransformTest {
         extends DynamicAvroDestinations<GenericRecord, Void, GenericRecord> {
 
       FileBasedSink.FilenamePolicy  filenamePolicy;
-      private final PCollectionView<Schema> schemaView;
+      private final PCollectionView<String> schemaView;
 
-      public GenericRecordAvroDestinations(FileBasedSink.FilenamePolicy filenamePolicy, PCollectionView<Schema> schemaView) {
+      public GenericRecordAvroDestinations(FileBasedSink.FilenamePolicy filenamePolicy, PCollectionView<String> schemaView) {
         this.schemaView = schemaView;
         this.filenamePolicy = filenamePolicy;
       }
@@ -393,7 +393,8 @@ public class AvroIOTransformTest {
 
       @Override
       public Schema getSchema(Void destination) {
-        return null;
+        String schema = sideInput(schemaView);
+        return new Schema.Parser().parse(schema);
       }
     }
 
@@ -405,14 +406,14 @@ public class AvroIOTransformTest {
       PCollection<GenericRecord> input = pipeline.apply(Create.of(Arrays.asList(genericRecords)).withCoder(AvroCoder.of(SCHEMA)));
       // sample 1 element because all elements of the collection have the same schema
       PCollection<GenericRecord> oneElementCollection = input.apply(Sample.<GenericRecord>any(1L));
-      PCollection<Schema> schemaPCollection = oneElementCollection
-          .apply(ParDo.of(new DoFn<GenericRecord, Schema>() {
+      PCollection<String> schemaPCollection = oneElementCollection
+          .apply(ParDo.of(new DoFn<GenericRecord, String>() {
 
             @ProcessElement public void processElement(ProcessContext context) {
-              context.output(context.element().getSchema());
+              context.output(context.element().getSchema().toString());
             }
           }));
-      PCollectionView<Schema> sideInput = schemaPCollection.apply(View.<Schema>asSingleton());
+      PCollectionView<String> sideInput = schemaPCollection.apply(View.<String>asSingleton());
       File avroFile = tmpFolder.newFile(OUTPUT_FILE);
       ResourceId fileResourceId = FileSystems.matchNewResource(avroFile.getPath(), false);
       DefaultFilenamePolicy filenamePolicy = DefaultFilenamePolicy.fromStandardParameters(
