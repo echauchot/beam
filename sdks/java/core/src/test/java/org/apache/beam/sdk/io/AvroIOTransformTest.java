@@ -18,6 +18,7 @@
 
 package org.apache.beam.sdk.io;
 
+import static org.apache.beam.sdk.io.fs.ResolveOptions.StandardResolveOptions.RESOLVE_FILE;
 import static org.hamcrest.collection.IsIterableContainingInAnyOrder.containsInAnyOrder;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
@@ -25,6 +26,7 @@ import static org.junit.Assert.assertThat;
 import com.google.common.collect.ImmutableList;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -33,6 +35,7 @@ import org.apache.avro.Schema;
 import org.apache.avro.file.DataFileReader;
 import org.apache.avro.file.DataFileWriter;
 import org.apache.avro.generic.GenericData;
+import org.apache.avro.generic.GenericDatumReader;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.avro.io.DatumReader;
 import org.apache.avro.io.DatumWriter;
@@ -40,11 +43,18 @@ import org.apache.avro.specific.SpecificDatumReader;
 import org.apache.avro.specific.SpecificDatumWriter;
 import org.apache.beam.sdk.coders.AvroCoder;
 import org.apache.beam.sdk.coders.Coder;
+import org.apache.beam.sdk.io.fs.ResourceId;
+import org.apache.beam.sdk.options.ValueProvider;
 import org.apache.beam.sdk.testing.NeedsRunner;
 import org.apache.beam.sdk.testing.PAssert;
 import org.apache.beam.sdk.testing.TestPipeline;
 import org.apache.beam.sdk.transforms.Create;
+import org.apache.beam.sdk.transforms.DoFn;
+import org.apache.beam.sdk.transforms.ParDo;
+import org.apache.beam.sdk.transforms.Sample;
+import org.apache.beam.sdk.transforms.View;
 import org.apache.beam.sdk.values.PCollection;
+import org.apache.beam.sdk.values.PCollectionView;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
@@ -86,6 +96,20 @@ public class AvroIOTransformTest {
 
   private static final Schema SCHEMA = parser.parse(SCHEMA_STRING);
 
+
+  private static final String SCHEMA_STRING2 =
+      "{\"namespace\": \"example.avro\",\n"
+          + " \"type\": \"record\",\n"
+          + " \"name\": \"AvroGeneratedUser\",\n"
+          + " \"fields\": [\n"
+          + "     {\"name\": \"name\", \"type\": \"string\"},\n"
+          + "     {\"name\": \"favorite_number\", \"type\": [\"int\", \"null\"]}\n"
+          + " ]\n"
+          + "}";
+
+  private static final Schema SCHEMA2 = new Schema.Parser().parse(SCHEMA_STRING2);
+
+
   private static AvroGeneratedUser[] generateAvroObjects() {
     final AvroGeneratedUser user1 = new AvroGeneratedUser();
     user1.setName("Bob");
@@ -102,27 +126,27 @@ public class AvroIOTransformTest {
     return new AvroGeneratedUser[] { user1, user2, user3 };
   }
 
+  private static GenericRecord[] generateAvroGenericRecords() {
+    final GenericRecord user1 = new GenericData.Record(SCHEMA);
+    user1.put("name", "Bob");
+    user1.put("favorite_number", 256);
+
+    final GenericRecord user2 = new GenericData.Record(SCHEMA);
+    user2.put("name", "Alice");
+    user2.put("favorite_number", 128);
+
+    final GenericRecord user3 = new GenericData.Record(SCHEMA);
+    user3.put("name", "Ted");
+    user3.put("favorite_color", "white");
+
+    return new GenericRecord[] { user1, user2, user3 };
+  }
+
   /**
    * Tests for AvroIO Read transforms, using classes generated from {@code user.avsc}.
    */
   @RunWith(Parameterized.class)
   public static class AvroIOReadTransformTest extends AvroIOTransformTest {
-
-    private static GenericRecord[] generateAvroGenericRecords() {
-      final GenericRecord user1 = new GenericData.Record(SCHEMA);
-      user1.put("name", "Bob");
-      user1.put("favorite_number", 256);
-
-      final GenericRecord user2 = new GenericData.Record(SCHEMA);
-      user2.put("name", "Alice");
-      user2.put("favorite_number", 128);
-
-      final GenericRecord user3 = new GenericData.Record(SCHEMA);
-      user3.put("name", "Ted");
-      user3.put("favorite_color", "white");
-
-      return new GenericRecord[] { user1, user2, user3 };
-    }
 
     private void generateAvroFile(final AvroGeneratedUser[] elements,
                                   final File avroFile) throws IOException {
@@ -260,6 +284,17 @@ public class AvroIOTransformTest {
       return users;
     }
 
+    private List<GenericRecord> readAvroFileWithGenericRecords(final File avroFile) throws IOException {
+      final DatumReader<GenericRecord> datumReader = new GenericDatumReader<>(SCHEMA);
+      final List<GenericRecord> genericRecords = new ArrayList<>();
+      try (DataFileReader<GenericRecord> dataFileReader = new DataFileReader<>(avroFile, datumReader)) {
+        while (dataFileReader.hasNext()) {
+          genericRecords.add(dataFileReader.next());
+        }
+      }
+      return genericRecords;
+    }
+
     @Parameterized.Parameters(name = "{0}_with_{1}")
     public static Iterable<Object[]> data() throws IOException {
 
@@ -316,6 +351,79 @@ public class AvroIOTransformTest {
     @Category(NeedsRunner.class)
     public void testWrite() throws Exception {
       runTestWrite(writeTransform);
+    }
+
+    // This is the user class that controls dynamic destinations for this avro write. The input to
+    // AvroIO.Write will be UserEvent, and we will be writing GenericRecords to the file (in order
+    // to have dynamic schemas). Everything is per userid, so we define a dynamic destination type
+    // of Integer.
+    class GenericRecordAvroDestinations
+        extends DynamicAvroDestinations<GenericRecord, Void, GenericRecord> {
+      ResourceId baseDir;
+      private final PCollectionView<Schema> schemaView;
+      public GenericRecordAvroDestinations(ResourceId baseDir, PCollectionView<Schema> schemaView) {
+        this.schemaView = schemaView;
+      }
+      public List<PCollectionView<?>> getSideInputs() {
+        return ImmutableList.<PCollectionView<?>>of(schemaView);
+      }
+
+      @Override
+      public GenericRecord formatRecord(GenericRecord record) {
+        return record;
+      }
+
+      @Override
+      public Void getDestination(GenericRecord element) {
+        return null;
+      }
+
+      @Override
+      public Void getDefaultDestination() {
+        return null;
+      }
+
+      @Override
+      public FileBasedSink.FilenamePolicy getFilenamePolicy(Void destination) {
+        return DefaultFilenamePolicy.fromStandardParameters(
+            ValueProvider.StaticValueProvider.of(
+                baseDir.resolve("avro.txt", RESOLVE_FILE)),
+            null,
+            null,
+            false);
+      }
+
+      @Override
+      public Schema getSchema(Void destination) {
+        return null;
+      }
+    }
+
+    @Test
+    @Category(NeedsRunner.class)
+    public void testWriteGenericRecords() throws Exception {
+      final File avroFile = tmpFolder.newFile("file.avro");
+      GenericRecord[] genericRecords = generateAvroGenericRecords();
+      @SuppressWarnings("unchecked") final
+      PCollection<GenericRecord> input = pipeline.apply(Create.of(Arrays.asList(genericRecords)).withCoder(AvroCoder.of(SCHEMA)));
+      // sample 1 element because all elements of the collection have the same schema
+      PCollection<GenericRecord> oneElementCollection = input.apply(Sample.<GenericRecord>any(1L));
+      PCollection<Schema> schemaPCollection = oneElementCollection
+          .apply(ParDo.of(new DoFn<GenericRecord, Schema>() {
+
+            @ProcessElement public void processElement(ProcessContext context) {
+              context.output(context.element().getSchema());
+            }
+          }));
+      PCollectionView<Schema> sideInput = schemaPCollection.apply(View.<Schema>asSingleton());
+      ResourceId baseDir =
+          FileSystems.matchNewResource(
+              Files.createTempDirectory(tmpFolder.getRoot().toPath(), "testWriteGenericRecords")
+                  .toString(),
+              true);
+      input.apply(AvroIO.<GenericRecord>writeCustomTypeToGenericRecords().to(new GenericRecordAvroDestinations(baseDir, sideInput)));
+      pipeline.run();
+      assertThat(readAvroFileWithGenericRecords(avroFile), containsInAnyOrder(genericRecords));
     }
 
     // TODO: for Write only, test withSuffix, withNumShards,
