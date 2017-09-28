@@ -18,7 +18,6 @@
 
 package org.apache.beam.sdk.io;
 
-import static org.apache.beam.sdk.io.fs.ResolveOptions.StandardResolveOptions.RESOLVE_FILE;
 import static org.hamcrest.collection.IsIterableContainingInAnyOrder.containsInAnyOrder;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
@@ -26,7 +25,6 @@ import static org.junit.Assert.assertThat;
 import com.google.common.collect.ImmutableList;
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -43,6 +41,7 @@ import org.apache.avro.specific.SpecificDatumReader;
 import org.apache.avro.specific.SpecificDatumWriter;
 import org.apache.beam.sdk.coders.AvroCoder;
 import org.apache.beam.sdk.coders.Coder;
+import org.apache.beam.sdk.coders.StringUtf8Coder;
 import org.apache.beam.sdk.io.fs.ResourceId;
 import org.apache.beam.sdk.options.ValueProvider;
 import org.apache.beam.sdk.testing.NeedsRunner;
@@ -384,6 +383,12 @@ public class AvroIOTransformTest {
       }
     }
 
+    private static class ExtractSchema extends DoFn<GenericRecord, String>{
+      @ProcessElement
+      public void processElement(ProcessContext context) {
+        context.output(context.element().getSchema().toString());
+      }
+    }
     @Test
     @Category(NeedsRunner.class)
     public void testWriteGenericRecords() throws Exception {
@@ -391,14 +396,9 @@ public class AvroIOTransformTest {
       @SuppressWarnings("unchecked") final
       PCollection<GenericRecord> input = pipeline.apply(Create.of(Arrays.asList(genericRecords)).withCoder(AvroCoder.of(SCHEMA)));
       // sample 1 element because all elements of the collection have the same schema
-      PCollection<GenericRecord> oneElementCollection = input.apply(Sample.<GenericRecord>any(1L));
-      PCollection<String> schemaPCollection = oneElementCollection
-          .apply(ParDo.of(new DoFn<GenericRecord, String>() {
 
-            @ProcessElement public void processElement(ProcessContext context) {
-              context.output(context.element().getSchema().toString());
-            }
-          }));
+      PCollection<GenericRecord> oneElementCollection = input.apply(Sample.<GenericRecord>any(1L));
+      PCollection<String> schemaPCollection = oneElementCollection.apply(ParDo.of(new ExtractSchema()));
       PCollectionView<String> sideInput = schemaPCollection.apply(View.<String>asSingleton());
       File avroFile = tmpFolder.newFile(OUTPUT_FILE);
       ResourceId fileResourceId = FileSystems.matchNewResource(avroFile.getPath(), false);
