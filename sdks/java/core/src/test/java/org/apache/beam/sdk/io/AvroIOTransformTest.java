@@ -41,7 +41,6 @@ import org.apache.avro.specific.SpecificDatumReader;
 import org.apache.avro.specific.SpecificDatumWriter;
 import org.apache.beam.sdk.coders.AvroCoder;
 import org.apache.beam.sdk.coders.Coder;
-import org.apache.beam.sdk.coders.StringUtf8Coder;
 import org.apache.beam.sdk.io.fs.ResourceId;
 import org.apache.beam.sdk.options.ValueProvider;
 import org.apache.beam.sdk.testing.NeedsRunner;
@@ -393,19 +392,29 @@ public class AvroIOTransformTest {
     @Category(NeedsRunner.class)
     public void testWriteGenericRecords() throws Exception {
       GenericRecord[] genericRecords = generateAvroGenericRecords();
-      @SuppressWarnings("unchecked") final
-      PCollection<GenericRecord> input = pipeline.apply(Create.of(Arrays.asList(genericRecords)).withCoder(AvroCoder.of(SCHEMA)));
-      // sample 1 element because all elements of the collection have the same schema
+      @SuppressWarnings("unchecked") final PCollection<GenericRecord> input = pipeline
+          .apply(Create.of(Arrays.asList(genericRecords)).withCoder(AvroCoder.of(SCHEMA)));
 
+      // sample 1 element because all elements of the collection have the same schema
       PCollection<GenericRecord> oneElementCollection = input.apply(Sample.<GenericRecord>any(1L));
       PCollection<String> schemaPCollection = oneElementCollection.apply(ParDo.of(new ExtractSchema()));
-      PCollectionView<String> sideInput = schemaPCollection.apply(View.<String>asSingleton());
+      PCollectionView<String> schemaView = schemaPCollection.apply(View.<String>asSingleton());
+
+
       File avroFile = tmpFolder.newFile(OUTPUT_FILE);
       ResourceId fileResourceId = FileSystems.matchNewResource(avroFile.getPath(), false);
       DefaultFilenamePolicy filenamePolicy = DefaultFilenamePolicy.fromStandardParameters(
           ValueProvider.StaticValueProvider.of(fileResourceId), null,
           null, false);
-      input.apply(AvroIO.<GenericRecord>writeCustomTypeToGenericRecords().to(new GenericRecordAvroDestinations(filenamePolicy, sideInput)));
+
+      // test with an schema unknown at build time.
+      AvroIO.TypedWrite<GenericRecord, Void, GenericRecord> write =
+          AvroIO.<GenericRecord>writeCustomTypeToGenericRecords()
+              .to(new GenericRecordAvroDestinations(filenamePolicy, schemaView))
+          .withTempDirectory(FileSystems.matchNewResource(tmpFolder.getRoot().getPath(), true))
+      .withoutSharding();
+
+      input.apply(write);
       pipeline.run();
       assertThat(readAvroFileWithGenericRecords(avroFile), containsInAnyOrder(genericRecords));
     }
