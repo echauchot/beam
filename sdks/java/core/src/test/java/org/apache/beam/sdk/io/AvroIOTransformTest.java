@@ -341,7 +341,7 @@ public class AvroIOTransformTest {
     // This is the user class that controls dynamic destinations for this avro write. The input to
     // AvroIO.Write will be GenericRecord, and we will be writing GenericRecords to the file (in order
     // to have dynamic schemas).
-    class GenericRecordAvroDestinations
+    static class GenericRecordAvroDestinations
         extends DynamicAvroDestinations<GenericRecord, Void, GenericRecord> {
 
       FileBasedSink.FilenamePolicy  filenamePolicy;
@@ -404,7 +404,7 @@ public class AvroIOTransformTest {
       File avroFile = tmpFolder.newFile(OUTPUT_FILE);
       ResourceId fileResourceId = FileSystems.matchNewResource(avroFile.getPath(), false);
       DefaultFilenamePolicy filenamePolicy = DefaultFilenamePolicy.fromStandardParameters(
-          ValueProvider.StaticValueProvider.of(fileResourceId), null,
+          ValueProvider.StaticValueProvider.of(fileResourceId), "",
           null, false);
 
       // test with an schema unknown at build time.
@@ -416,7 +416,7 @@ public class AvroIOTransformTest {
 
       input.apply(write);
       pipeline.run();
-      assertThat(readAvroFileWithGenericRecords(avroFile), containsInAnyOrder(genericRecords));
+       assertThat(readAvroFileWithGenericRecords(avroFile), containsInAnyOrder(genericRecords));
     }
 
     // TODO: for Write only, test withSuffix, withNumShards,
