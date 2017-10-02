@@ -397,6 +397,7 @@ public class AvroIOTransformTest {
 
       // sample 1 element because all elements of the collection have the same schema
       PCollection<GenericRecord> oneElementCollection = input.apply(Sample.<GenericRecord>any(1L));
+      // pretend we do not know the schema at build time (because we are testing schema less avro write).
       PCollection<String> schemaPCollection = oneElementCollection.apply(ParDo.of(new ExtractSchema()));
       PCollectionView<String> schemaView = schemaPCollection.apply(View.<String>asSingleton());
 
@@ -407,7 +408,7 @@ public class AvroIOTransformTest {
           ValueProvider.StaticValueProvider.of(fileResourceId), "",
           null, false);
 
-      // test with an schema unknown at build time.
+      // schema is discovered at run time, pass it as a side input to the write transform
       AvroIO.TypedWrite<GenericRecord, Void, GenericRecord> write =
           AvroIO.<GenericRecord>writeCustomTypeToGenericRecords()
               .to(new GenericRecordAvroDestinations(filenamePolicy, schemaView))
