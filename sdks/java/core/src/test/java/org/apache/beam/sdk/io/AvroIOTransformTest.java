@@ -390,7 +390,7 @@ public class AvroIOTransformTest {
     }
     @Test
     @Category(NeedsRunner.class)
-    public void testWriteGenericRecords() throws Exception {
+    public void testWriteGenericRecordsSchemaInSideInput() throws Exception {
       GenericRecord[] genericRecords = generateAvroGenericRecords();
       @SuppressWarnings("unchecked") final PCollection<GenericRecord> input = pipeline
           .apply(Create.of(Arrays.asList(genericRecords)).withCoder(AvroCoder.of(SCHEMA)));
