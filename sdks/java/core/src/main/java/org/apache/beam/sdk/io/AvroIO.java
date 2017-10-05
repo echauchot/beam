@@ -349,6 +349,7 @@ public class AvroIO {
   /**
    * Writes a {@link PCollection} to an Avro file (or multiple Avro files matching a sharding
    * pattern).
+   * @deprecated Use {@link #write()} that will determine the schema out of the elements
    */
   @Deprecated
   public static <T> Write<T> write(Class<T> recordClass) {
@@ -370,8 +371,11 @@ public class AvroIO {
             .build());
   }
 
+  /** Writes Avro records of the specified schema.
+   * @deprecated Use {@link #writeGenericRecords()} that will determine the schema
+   * out of the elements
+   * */
   @Deprecated
-  /** Writes Avro records of the specified schema. */
   public static Write<GenericRecord> writeGenericRecords(Schema schema) {
     return new Write<>(
         AvroIO.<GenericRecord, GenericRecord>defaultWriteBuilder()
@@ -422,7 +426,10 @@ public class AvroIO {
 
   /**
    * Writes Avro records of the specified schema. The schema is specified as a JSON-encoded string.
-   */
+   * @deprecated Use {@link #writeGenericRecords()} that will determine the schema
+   * out of the elements
+   * */
+
   @Deprecated
   public static Write<GenericRecord> writeGenericRecords(String schema) {
     return writeGenericRecords(new Schema.Parser().parse(schema));
@@ -1016,6 +1023,7 @@ public class AvroIO {
     /**
      * Sets the the output schema. Can only be used when the output type is {@link GenericRecord}
      * and when not using {@link #to(DynamicAvroDestinations)}.
+     * @deprecated the schema can be determined out of the elements. See {@link #write()}
      */
     @Deprecated
     public TypedWrite<UserT, DestinationT, OutputT> withSchema(Schema schema) {
