@@ -124,6 +124,41 @@
   <build>
     <pluginManagement>
       <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-shade-plugin</artifactId>
+          <version>${maven-shade-plugin.version}</version>
+          <executions>
+            <execution>
+              <id>bundle-and-repackage</id>
+              <phase>package</phase>
+              <goals>
+                <goal>shade</goal>
+              </goals>
+              <configuration>
+                <shadeTestJar>true</shadeTestJar>
+                <artifactSet>
+                  <includes>
+                    <include>*:*</include>
+                  </includes>
+                </artifactSet>
+                <filters>
+                  <filter>
+                    <artifact>*:*</artifact>
+                    <excludes>
+                      <exclude>META-INF/*.SF</exclude>
+                      <exclude>META-INF/*.DSA</exclude>
+                      <exclude>META-INF/*.RSA</exclude>
+                    </excludes>
+                  </filter>
+                </filters>
+                <transformers>
+                  <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
+                </transformers>
+              </configuration>
+            </execution>
+          </executions>
+        </plugin>
         <!-- Integration Tests -->
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
@@ -165,6 +200,10 @@
   </build>
 
   <dependencies>
+    <dependency>
+      <groupId>org.apache.beam</groupId>
+      <artifactId>beam-runners-extensions-java-metrics</artifactId>
+    </dependency>
     <!-- Flink dependencies -->
     <dependency>
       <groupId>org.apache.flink</groupId>
@@ -223,11 +262,6 @@
     <dependency>
       <groupId>org.apache.beam</groupId>
       <artifactId>beam-model-pipeline</artifactId>
-    </dependency>
-
-    <dependency>
-      <groupId>org.apache.beam</groupId>
-      <artifactId>beam-model-fn-execution</artifactId>
     </dependency>
 
     <dependency>
@@ -312,9 +346,8 @@
 
     <dependency>
       <groupId>io.grpc</groupId>
-      <artifactId>grpc-stub</artifactId>
+      <artifactId>grpc-core</artifactId>
     </dependency>
-
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
