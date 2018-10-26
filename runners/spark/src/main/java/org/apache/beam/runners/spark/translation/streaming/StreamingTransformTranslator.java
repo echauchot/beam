@@ -397,6 +397,14 @@ public final class StreamingTransformTranslator {
         JavaDStream<WindowedValue<InputT>> dStream = unboundedDataset.getDStream();
 
         final String stepName = context.getCurrentTransform().getFullName();
+        // TODO stateful support with MapWithState
+        // map dStream into a JavaPairDstream<K, WindowedValue<V>> knowing that InputT = KV<K, V> (DoFnSignature ensures it)
+        // apply modified MultiDoFnFunction that manages state and can be passed to JavaPairDstream.mapWithSate()
+        // state is an arbitrary object. So we can use a state impl SparkStateInternals
+        // and wrap it in a org.apache.spark.streaming.State to pass to mapWithSate()
+        // apply mapPartitionToPair to get JavaPairDStream<TupleTag<?>, WindowedValue<?>> all variable
+        // so that the filtering for multi-output can be done in later stages
+
         JavaPairDStream<TupleTag<?>, WindowedValue<?>> all =
             dStream.transformToPair(
                 rdd -> {
