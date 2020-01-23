@@ -69,7 +69,7 @@ public class TranslationContext {
   @SuppressFBWarnings("URF_UNREAD_FIELD") // make spotbugs happy
   private final SparkSession sparkSession;
 
-  private final Map<PCollectionView<?>, Dataset<?>> broadcastDataSets;
+  private final Map<PCollectionView<?>, Dataset<?>> sideInputsDatasets;
 
   public TranslationContext(SparkStructuredStreamingPipelineOptions options) {
     SparkConf sparkConf = new SparkConf();
@@ -98,7 +98,7 @@ public class TranslationContext {
     this.serializablePipelineOptions = new SerializablePipelineOptions(options);
     this.datasets = new HashMap<>();
     this.leaves = new HashSet<>();
-    this.broadcastDataSets = new HashMap<>();
+    this.sideInputsDatasets = new HashMap<>();
   }
 
   public SparkSession getSparkSession() {
@@ -155,15 +155,15 @@ public class TranslationContext {
   }
 
   public <ViewT, ElemT> void setSideInputDataset(
-      PCollectionView<ViewT> value, Dataset<WindowedValue<ElemT>> set) {
-    if (!broadcastDataSets.containsKey(value)) {
-      broadcastDataSets.put(value, set);
+      PCollectionView<ViewT> view, Dataset<WindowedValue<ElemT>> dataset) {
+    if (!sideInputsDatasets.containsKey(view)) {
+      sideInputsDatasets.put(view, dataset);
     }
   }
 
   @SuppressWarnings("unchecked")
   public <T> Dataset<T> getSideInputDataSet(PCollectionView<?> value) {
-    return (Dataset<T>) broadcastDataSets.get(value);
+    return (Dataset<T>) sideInputsDatasets.get(value);
   }
 
   // --------------------------------------------------------------------------------------------

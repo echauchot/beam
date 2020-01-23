@@ -29,6 +29,7 @@ import org.apache.beam.runners.spark.structuredstreaming.metrics.MetricsAccumula
 import org.apache.beam.runners.spark.structuredstreaming.metrics.MetricsContainerStepMapAccumulator;
 import org.apache.beam.runners.spark.structuredstreaming.translation.TransformTranslator;
 import org.apache.beam.runners.spark.structuredstreaming.translation.TranslationContext;
+import org.apache.beam.runners.spark.structuredstreaming.translation.batch.functions.TempViewSideInputReader;
 import org.apache.beam.runners.spark.structuredstreaming.translation.helpers.CoderHelpers;
 import org.apache.beam.runners.spark.structuredstreaming.translation.helpers.EncoderHelpers;
 import org.apache.beam.runners.spark.structuredstreaming.translation.helpers.MultiOuputCoder;
@@ -99,12 +100,11 @@ class ParDoTranslatorBatch<InputT, OutputT>
     // construct a map from side input to WindowingStrategy so that
     // the DoFn runner can map main-input windows to side input windows
     List<PCollectionView<?>> sideInputs = getSideInputs(context);
-    Map<PCollectionView<?>, WindowingStrategy<?, ?>> sideInputStrategies = new HashMap<>();
-    for (PCollectionView<?> sideInput : sideInputs) {
-      sideInputStrategies.put(sideInput, sideInput.getPCollection().getWindowingStrategy());
-    }
 
-    SideInputBroadcast broadcastStateData = createBroadcastSideInputs(sideInputs, context);
+    Map<PCollectionView<?>, WindowingStrategy<?, ?>> viewToWindowingStrategy = new HashMap<>();
+    for (PCollectionView<?> sideInput : sideInputs) {
+      viewToWindowingStrategy.put(sideInput, sideInput.getPCollection().getWindowingStrategy());
+    }
 
     Map<TupleTag<?>, Coder<?>> outputCoderMap = context.getOutputCoders();
     MetricsContainerStepMapAccumulator metricsAccum = MetricsAccumulator.getInstance();
@@ -118,22 +118,21 @@ class ParDoTranslatorBatch<InputT, OutputT>
 
     Map<String, PCollectionView<?>> sideInputMapping =
         ParDoTranslation.getSideInputMapping(context.getCurrentTransform());
-    @SuppressWarnings("unchecked")
-    DoFnFunction<InputT, OutputT> doFnWrapper =
-        new DoFnFunction(
-            metricsAccum,
-            stepName,
-            doFn,
-            windowingStrategy,
-            sideInputStrategies,
-            context.getSerializableOptions(),
-            additionalOutputTags,
-            mainOutputTag,
-            inputCoder,
-            outputCoderMap,
-            broadcastStateData,
-            doFnSchemaInformation,
-            sideInputMapping);
+    createTempViews(sideInputs, context, false);
+    @SuppressWarnings("unchecked") DoFnFunction<InputT, OutputT> doFnWrapper = new DoFnFunction(
+        metricsAccum,
+        stepName,
+        doFn,
+        windowingStrategy,
+        viewToWindowingStrategy,
+        context.getSerializableOptions(),
+        additionalOutputTags,
+        mainOutputTag,
+        inputCoder,
+        outputCoderMap,
+        doFnSchemaInformation,
+        sideInputMapping,
+        context.getSparkSession());
 
     MultiOuputCoder multipleOutputCoder =
         MultiOuputCoder.of(SerializableCoder.of(TupleTag.class), outputCoderMap, windowCoder);
@@ -157,31 +156,15 @@ class ParDoTranslatorBatch<InputT, OutputT>
     }
   }
 
-  private static SideInputBroadcast createBroadcastSideInputs(
-      List<PCollectionView<?>> sideInputs, TranslationContext context) {
-    JavaSparkContext jsc =
-        JavaSparkContext.fromSparkContext(context.getSparkSession().sparkContext());
-
-    SideInputBroadcast sideInputBroadcast = new SideInputBroadcast();
-    for (PCollectionView<?> sideInput : sideInputs) {
-      Coder<? extends BoundedWindow> windowCoder =
-          sideInput.getPCollection().getWindowingStrategy().getWindowFn().windowCoder();
-
-      Coder<WindowedValue<?>> windowedValueCoder =
-          (Coder<WindowedValue<?>>)
-              (Coder<?>)
-                  WindowedValue.getFullCoder(sideInput.getPCollection().getCoder(), windowCoder);
-      Dataset<WindowedValue<?>> broadcastSet = context.getSideInputDataSet(sideInput);
-      List<WindowedValue<?>> valuesList = broadcastSet.collectAsList();
-      List<byte[]> codedValues = new ArrayList<>();
-      for (WindowedValue<?> v : valuesList) {
-        codedValues.add(CoderHelpers.toByteArray(v, windowedValueCoder));
+  private static void createTempViews(List<PCollectionView<?>> sideInputs, TranslationContext context, boolean shouldMaterializeInMemory) {
+    // TODO improve when dataset schema contains window, key view by window
+    for (PCollectionView<?> sideInput : sideInputs){
+      Dataset<WindowedValue<?>> sideInputDataSet = context.getSideInputDataSet(sideInput);
+      sideInputDataSet.createOrReplaceTempView(TempViewSideInputReader.getViewName(sideInput.getTagInternal().getId()));
+      if (shouldMaterializeInMemory){
+        sideInputDataSet.cache();
       }
-
-      sideInputBroadcast.add(
-          sideInput.getTagInternal().getId(), jsc.broadcast(codedValues), windowedValueCoder);
     }
-    return sideInputBroadcast;
   }
 
   private List<PCollectionView<?>> getSideInputs(TranslationContext context) {

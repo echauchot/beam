@@ -26,9 +26,7 @@ import org.apache.beam.runners.core.DoFnRunners;
 import org.apache.beam.runners.core.construction.SerializablePipelineOptions;
 import org.apache.beam.runners.spark.structuredstreaming.metrics.MetricsContainerStepMapAccumulator;
 import org.apache.beam.runners.spark.structuredstreaming.translation.batch.functions.NoOpStepContext;
-import org.apache.beam.runners.spark.structuredstreaming.translation.batch.functions.SparkSideInputReader;
-import org.apache.beam.runners.spark.structuredstreaming.translation.helpers.SideInputBroadcast;
-import org.apache.beam.runners.spark.structuredstreaming.translation.utils.CachedSideInputReader;
+import org.apache.beam.runners.spark.structuredstreaming.translation.batch.functions.TempViewSideInputReader;
 import org.apache.beam.sdk.coders.Coder;
 import org.apache.beam.sdk.transforms.DoFn;
 import org.apache.beam.sdk.transforms.DoFnSchemaInformation;
@@ -42,13 +40,14 @@ import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.collect.Iterator
 import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.collect.LinkedListMultimap;
 import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.collect.Multimap;
 import org.apache.spark.api.java.function.MapPartitionsFunction;
+import org.apache.spark.sql.SparkSession;
 import scala.Tuple2;
 
 /**
  * Encapsulates a {@link DoFn} inside a Spark {@link
- * org.apache.spark.api.java.function.MapPartitionsFunction}.
+ * MapPartitionsFunction}.
  *
- * <p>We get a mapping from {@link org.apache.beam.sdk.values.TupleTag} to output index and must tag
+ * <p>We get a mapping from {@link TupleTag} to output index and must tag
  * all outputs with the output number. Afterwards a filter will filter out those elements that are
  * not to be in a specific output.
  */
@@ -60,43 +59,43 @@ public class DoFnFunction<InputT, OutputT>
   private final DoFn<InputT, OutputT> doFn;
   private transient boolean wasSetupCalled;
   private final WindowingStrategy<?, ?> windowingStrategy;
-  private final Map<PCollectionView<?>, WindowingStrategy<?, ?>> sideInputs;
+  private final Map<PCollectionView<?>, WindowingStrategy<?, ?>> viewToWindowingStrategy;
   private final SerializablePipelineOptions serializableOptions;
   private final List<TupleTag<?>> additionalOutputTags;
   private final TupleTag<OutputT> mainOutputTag;
   private final Coder<InputT> inputCoder;
   private final Map<TupleTag<?>, Coder<?>> outputCoderMap;
-  private final SideInputBroadcast broadcastStateData;
   private DoFnSchemaInformation doFnSchemaInformation;
   private Map<String, PCollectionView<?>> sideInputMapping;
+  private SparkSession sparkSession;
 
   public DoFnFunction(
       MetricsContainerStepMapAccumulator metricsAccum,
       String stepName,
       DoFn<InputT, OutputT> doFn,
       WindowingStrategy<?, ?> windowingStrategy,
-      Map<PCollectionView<?>, WindowingStrategy<?, ?>> sideInputs,
+      Map<PCollectionView<?>, WindowingStrategy<?, ?>> viewToWindowingStrategy,
       SerializablePipelineOptions serializableOptions,
       List<TupleTag<?>> additionalOutputTags,
       TupleTag<OutputT> mainOutputTag,
       Coder<InputT> inputCoder,
       Map<TupleTag<?>, Coder<?>> outputCoderMap,
-      SideInputBroadcast broadcastStateData,
       DoFnSchemaInformation doFnSchemaInformation,
-      Map<String, PCollectionView<?>> sideInputMapping) {
+      Map<String, PCollectionView<?>> sideInputMapping,
+      SparkSession sparkSession) {
     this.metricsAccum = metricsAccum;
     this.stepName = stepName;
     this.doFn = doFn;
     this.windowingStrategy = windowingStrategy;
-    this.sideInputs = sideInputs;
+    this.viewToWindowingStrategy = viewToWindowingStrategy;
     this.serializableOptions = serializableOptions;
     this.additionalOutputTags = additionalOutputTags;
     this.mainOutputTag = mainOutputTag;
     this.inputCoder = inputCoder;
     this.outputCoderMap = outputCoderMap;
-    this.broadcastStateData = broadcastStateData;
     this.doFnSchemaInformation = doFnSchemaInformation;
     this.sideInputMapping = sideInputMapping;
+    this.sparkSession = sparkSession;
   }
 
   @Override
@@ -113,7 +112,8 @@ public class DoFnFunction<InputT, OutputT>
         DoFnRunners.simpleRunner(
             serializableOptions.get(),
             doFn,
-            CachedSideInputReader.of(new SparkSideInputReader(sideInputs, broadcastStateData)),
+            //TODO check that no need to wrap in a cache system because underlying dataset is cached.
+            new TempViewSideInputReader(viewToWindowingStrategy, sparkSession),
             outputManager,
             mainOutputTag,
             additionalOutputTags,
