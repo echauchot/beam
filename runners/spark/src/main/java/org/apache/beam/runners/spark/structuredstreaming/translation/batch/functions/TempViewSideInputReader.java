@@ -83,7 +83,9 @@ public class TempViewSideInputReader implements SideInputReader {
         .of(kvCoder, windowCoder);
     final BoundedWindow sideInputWindow = view.getWindowMappingFn().getSideInputWindow(window);
 
-    //TODO test to store only dataset in the TranslationContext and use no temp view
+    //TODO sparkSession gets serialized alongside with the DoFnFunction in the flatmap call in Pardo translation.
+    // The problem is that the SparkSession cannot be serialized (not aimed to be used in parallel)
+    // => the all architecture of side inputs based on temp views is wrong
 
     // get the PCollectionView created by the user
     Dataset<Row> rowDataset = sparkSession.sql(
