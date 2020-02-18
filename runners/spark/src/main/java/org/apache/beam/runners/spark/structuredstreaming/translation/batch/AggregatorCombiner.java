@@ -58,6 +58,7 @@ class AggregatorCombiner<K, InputT, AccumT, OutputT, W extends BoundedWindow>
   private TimestampCombiner timestampCombiner;
   private IterableCoder<WindowedValue<AccumT>> accumulatorCoder;
   private IterableCoder<WindowedValue<OutputT>> outputCoder;
+  private boolean mergingWindows;
 
   public AggregatorCombiner(
       Combine.CombineFn<InputT, AccumT, OutputT> combineFn,
@@ -75,6 +76,7 @@ class AggregatorCombiner<K, InputT, AccumT, OutputT, W extends BoundedWindow>
         IterableCoder.of(
             WindowedValue.FullWindowedValueCoder.of(
                 outputCoder, windowingStrategy.getWindowFn().windowCoder()));
+    this.mergingWindows  = !windowingStrategy.getWindowFn().isNonMerging();
   }
 
   @Override
@@ -103,12 +105,14 @@ class AggregatorCombiner<K, InputT, AccumT, OutputT, W extends BoundedWindow>
 
     // merge the windows of all the accumulators
     Iterable<WindowedValue<AccumT>> accumulators = Iterables.concat(accumulators1, accumulators2);
-    Set<W> accumulatorsWindows = collectAccumulatorsWindows(accumulators);
-    Map<W, W> windowToMergeResult;
-    try {
-      windowToMergeResult = mergeWindows(windowingStrategy, accumulatorsWindows);
-    } catch (Exception e) {
-      throw new RuntimeException("Unable to merge accumulators windows", e);
+    Map<W, W> windowToMergeResult = new HashMap<>();
+    if (mergingWindows) {
+      Set<W> accumulatorsWindows = collectAccumulatorsWindows(accumulators);
+      try {
+        windowToMergeResult = mergeWindows(windowingStrategy, accumulatorsWindows);
+      } catch (Exception e) {
+        throw new RuntimeException("Unable to merge accumulators windows", e);
+      }
     }
 
     // group accumulators by their merged window
@@ -201,12 +205,6 @@ class AggregatorCombiner<K, InputT, AccumT, OutputT, W extends BoundedWindow>
   private Map<W, W> mergeWindows(WindowingStrategy<InputT, W> windowingStrategy, Set<W> windows)
       throws Exception {
     WindowFn<InputT, W> windowFn = windowingStrategy.getWindowFn();
-
-    if (windowingStrategy.getWindowFn().isNonMerging()) {
-      // Return an empty map, indicating that every window is not merged.
-      return Collections.emptyMap();
-    }
-
     Map<W, W> windowToMergeResult = new HashMap<>();
     windowFn.mergeWindows(new MergeContextImpl(windowFn, windows, windowToMergeResult));
     return windowToMergeResult;
