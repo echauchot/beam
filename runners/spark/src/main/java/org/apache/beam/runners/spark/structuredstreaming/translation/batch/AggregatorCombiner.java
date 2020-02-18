@@ -76,7 +76,7 @@ class AggregatorCombiner<K, InputT, AccumT, OutputT, W extends BoundedWindow>
         IterableCoder.of(
             WindowedValue.FullWindowedValueCoder.of(
                 outputCoder, windowingStrategy.getWindowFn().windowCoder()));
-    this.mergingWindows  = !windowingStrategy.getWindowFn().isNonMerging();
+    this.mergingWindows = !windowingStrategy.getWindowFn().isNonMerging();
   }
 
   @Override
