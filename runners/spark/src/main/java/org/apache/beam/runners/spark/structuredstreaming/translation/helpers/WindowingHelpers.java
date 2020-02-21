@@ -21,10 +21,12 @@ import java.util.Collection;
 import org.apache.beam.runners.spark.structuredstreaming.translation.TranslationContext;
 import org.apache.beam.sdk.transforms.windowing.BoundedWindow;
 import org.apache.beam.sdk.transforms.windowing.GlobalWindows;
+import org.apache.beam.sdk.transforms.windowing.TimestampCombiner;
 import org.apache.beam.sdk.transforms.windowing.Window;
 import org.apache.beam.sdk.transforms.windowing.WindowFn;
 import org.apache.beam.sdk.util.WindowedValue;
 import org.apache.beam.sdk.values.PCollection;
+import org.apache.beam.sdk.values.WindowingStrategy;
 import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.collect.Iterables;
 import org.apache.spark.api.java.function.MapFunction;
 import org.joda.time.Instant;
@@ -78,5 +80,17 @@ public final class WindowingHelpers {
                   });
           return WindowedValue.of(element, timestamp, windows, windowedValue.getPane());
         };
+  }
+  /**
+   * Verify if given windowing strategy and coders are suitable for group by key and window
+   * optimization.
+   *
+   * @param windowingStrategy the windowing strategy
+   * @return {@code true} if group by key and window can be used
+   */
+  public static boolean isEligibleForGroupByWindow(WindowingStrategy<?, ?> windowingStrategy) {
+    return windowingStrategy.getWindowFn().isNonMerging()
+        && windowingStrategy.getTimestampCombiner() == TimestampCombiner.END_OF_WINDOW
+        && windowingStrategy.getWindowFn().windowCoder().consistentWithEquals();
   }
 }

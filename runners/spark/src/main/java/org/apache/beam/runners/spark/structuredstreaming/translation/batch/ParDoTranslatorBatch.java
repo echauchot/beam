@@ -29,7 +29,6 @@ import org.apache.beam.runners.spark.structuredstreaming.metrics.MetricsAccumula
 import org.apache.beam.runners.spark.structuredstreaming.metrics.MetricsContainerStepMapAccumulator;
 import org.apache.beam.runners.spark.structuredstreaming.translation.TransformTranslator;
 import org.apache.beam.runners.spark.structuredstreaming.translation.TranslationContext;
-import org.apache.beam.runners.spark.structuredstreaming.translation.helpers.CoderHelpers;
 import org.apache.beam.runners.spark.structuredstreaming.translation.helpers.EncoderHelpers;
 import org.apache.beam.runners.spark.structuredstreaming.translation.helpers.MultiOuputCoder;
 import org.apache.beam.runners.spark.structuredstreaming.translation.helpers.SideInputBroadcast;
@@ -47,7 +46,6 @@ import org.apache.beam.sdk.values.PCollectionView;
 import org.apache.beam.sdk.values.PValue;
 import org.apache.beam.sdk.values.TupleTag;
 import org.apache.beam.sdk.values.WindowingStrategy;
-import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.api.java.function.FilterFunction;
 import org.apache.spark.api.java.function.MapFunction;
 import org.apache.spark.sql.Dataset;
@@ -105,7 +103,8 @@ class ParDoTranslatorBatch<InputT, OutputT>
       sideInputStrategies.put(sideInput, sideInput.getPCollection().getWindowingStrategy());
     }
 
-    SideInputBroadcast broadcastStateData = createBroadcastSideInputs(sideInputs, context);
+    SideInputBroadcast broadcastStateData =
+        SideInputBroadcast.createBroadcastSideInputs(sideInputs, context);
 
     Map<TupleTag<?>, Coder<?>> outputCoderMap = context.getOutputCoders();
     MetricsContainerStepMapAccumulator metricsAccum = MetricsAccumulator.getInstance();
@@ -156,33 +155,6 @@ class ParDoTranslatorBatch<InputT, OutputT>
               EncoderHelpers.fromBeamCoder(windowedValueCoder));
       context.putDatasetWildcard(outputs.entrySet().iterator().next().getValue(), outputDataset);
     }
-  }
-
-  private static SideInputBroadcast createBroadcastSideInputs(
-      List<PCollectionView<?>> sideInputs, TranslationContext context) {
-    JavaSparkContext jsc =
-        JavaSparkContext.fromSparkContext(context.getSparkSession().sparkContext());
-
-    SideInputBroadcast sideInputBroadcast = new SideInputBroadcast();
-    for (PCollectionView<?> sideInput : sideInputs) {
-      Coder<? extends BoundedWindow> windowCoder =
-          sideInput.getPCollection().getWindowingStrategy().getWindowFn().windowCoder();
-
-      Coder<WindowedValue<?>> windowedValueCoder =
-          (Coder<WindowedValue<?>>)
-              (Coder<?>)
-                  WindowedValue.getFullCoder(sideInput.getPCollection().getCoder(), windowCoder);
-      Dataset<WindowedValue<?>> broadcastSet = context.getSideInputDataSet(sideInput);
-      List<WindowedValue<?>> valuesList = broadcastSet.collectAsList();
-      List<byte[]> codedValues = new ArrayList<>();
-      for (WindowedValue<?> v : valuesList) {
-        codedValues.add(CoderHelpers.toByteArray(v, windowedValueCoder));
-      }
-
-      sideInputBroadcast.add(
-          sideInput.getTagInternal().getId(), jsc.broadcast(codedValues), windowedValueCoder);
-    }
-    return sideInputBroadcast;
   }
 
   private List<PCollectionView<?>> getSideInputs(TranslationContext context) {
