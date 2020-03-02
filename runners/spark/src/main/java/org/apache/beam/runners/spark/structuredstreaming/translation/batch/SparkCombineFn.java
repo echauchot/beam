@@ -100,8 +100,8 @@ public class SparkCombineFn<InputT, ValueT, AccumT, OutputT>
       Map<PCollectionView<?>, WindowingStrategy<?, ?>> sideInputStrategies,
       SideInputBroadcast sideInputBroadcast,
       WindowingStrategy<?, ?> windowingStrategy,
-      Coder<WindowedAccumulator<InputT, ValueT, AccumT, ?>> accumulatorCoder,
-      Coder<Iterable<WindowedValue<OutputT>>> outputCoder) {
+      Coder<AccumT> accumulatorCoder,
+      Coder<OutputT> outputCoder) {
     this(
         global,
         toValue,
@@ -125,8 +125,8 @@ public class SparkCombineFn<InputT, ValueT, AccumT, OutputT>
       SideInputBroadcast sideInputBroadcast,
       WindowingStrategy<?, ?> windowingStrategy,
       WindowedAccumulator.Type defaultNonMergingCombineStrategy,
-      Coder<WindowedAccumulator<InputT, ValueT, AccumT, ?>> accumulatorCoder,
-      Coder<Iterable<WindowedValue<OutputT>>> outputCoder) {
+      Coder<AccumT> accumulatorCoder,
+      Coder<OutputT> outputCoder) {
 
     this.globalCombine = global;
     this.options = options;
@@ -142,8 +142,10 @@ public class SparkCombineFn<InputT, ValueT, AccumT, OutputT>
     TypeDescriptor<BoundedWindow> untyped =
         (TypeDescriptor<BoundedWindow>) windowingStrategy.getWindowFn().getWindowTypeDescriptor();
     this.windowComparator = asWindowComparator(untyped);
-    this.accumulatorCoder = accumulatorCoder;
-    this.outputCoder = outputCoder;
+    this.accumulatorCoder = accumulatorCoder(this.windowingStrategy.getWindowFn().windowCoder(), accumulatorCoder, windowingStrategy);
+    this.outputCoder = IterableCoder.of(
+        WindowedValue.FullWindowedValueCoder.of(
+            outputCoder, this.windowingStrategy.getWindowFn().windowCoder()));
   }
 
   @VisibleForTesting
@@ -154,8 +156,8 @@ public class SparkCombineFn<InputT, ValueT, AccumT, OutputT>
       SideInputBroadcast sideInputBroadcast,
       WindowingStrategy<?, ?> windowingStrategy,
       WindowedAccumulator.Type nonMergingStrategy,
-      Coder<WindowedAccumulator<KV<K, V>, V, AccumT, ?>> accumulatorCoder,
-      Coder<Iterable<WindowedValue<OutputT>>> outputCoder) {
+      Coder<AccumT> accumulatorCoder,
+      Coder<OutputT> outputCoder) {
     return new SparkCombineFn<>(
         false,
         KV::getValue,
@@ -173,8 +175,8 @@ public class SparkCombineFn<InputT, ValueT, AccumT, OutputT>
       Map<PCollectionView<?>, WindowingStrategy<?, ?>> sideInputStrategies,
       SideInputBroadcast sideInputBroadcast,
       WindowingStrategy<?, ?> windowingStrategy,
-      Coder<WindowedAccumulator<KV<K, V>, V, AccumT, ?>> accumulatorCoder,
-      Coder<Iterable<WindowedValue<OutputT>>> outputCoder) {
+      Coder<AccumT> accumulatorCoder,
+      Coder<OutputT> outputCoder) {
     return new SparkCombineFn<>(
         false,
         KV::getValue,
@@ -191,8 +193,8 @@ public class SparkCombineFn<InputT, ValueT, AccumT, OutputT>
       Map<PCollectionView<?>, WindowingStrategy<?, ?>> sideInputStrategies,
       SideInputBroadcast sideInputBroadcast,
       WindowingStrategy<?, ?> windowingStrategy,
-      Coder<WindowedAccumulator<InputT, InputT, AccumT, ?>> accumulatorCoder,
-      Coder<Iterable<WindowedValue<OutputT>>> outputCoder) {
+      Coder<AccumT> accumulatorCoder,
+      Coder<OutputT> outputCoder) {
     return new SparkCombineFn<>(
         true,
         e -> e,
@@ -658,7 +660,7 @@ public class SparkCombineFn<InputT, ValueT, AccumT, OutputT>
     }
   }
 
-  static class WindowedAccumulatorCoder<InputT, ValueT, AccumT>
+  public static class WindowedAccumulatorCoder<InputT, ValueT, AccumT>
       extends Coder<WindowedAccumulator<InputT, ValueT, AccumT, ?>> {
 
     private final Function<InputT, ValueT> toValue;
@@ -807,7 +809,7 @@ public class SparkCombineFn<InputT, ValueT, AccumT, OutputT>
     return EncoderHelpers.fromBeamCoder(outputCoder);
   }
 
-  public WindowedAccumulatorCoder<InputT, ValueT, AccumT> accumulatorCoder(
+  private  WindowedAccumulatorCoder<InputT, ValueT, AccumT> accumulatorCoder(
       Coder<BoundedWindow> windowCoder,
       Coder<AccumT> accumulatorCoder,
       WindowingStrategy<?, ?> windowingStrategy) {

@@ -32,7 +32,6 @@ import org.apache.beam.sdk.coders.KvCoder;
 import org.apache.beam.sdk.transforms.Combine;
 import org.apache.beam.sdk.transforms.CombineWithContext;
 import org.apache.beam.sdk.transforms.PTransform;
-import org.apache.beam.sdk.transforms.windowing.BoundedWindow;
 import org.apache.beam.sdk.util.CombineFnUtil;
 import org.apache.beam.sdk.util.WindowedValue;
 import org.apache.beam.sdk.values.KV;
@@ -40,7 +39,6 @@ import org.apache.beam.sdk.values.PCollection;
 import org.apache.beam.sdk.values.PCollectionView;
 import org.apache.beam.sdk.values.WindowingStrategy;
 import org.apache.spark.api.java.function.FlatMapFunction;
-import org.apache.spark.api.java.function.ReduceFunction;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.KeyValueGroupedDataset;
 import scala.Tuple2;
@@ -71,10 +69,6 @@ class CombinePerKeyTranslatorBatch<K, V, AccumT, OutputT>
     Coder<K> keyCoder = inputCoder.getKeyCoder();
     KvCoder<K, OutputT> outputKVCoder = (KvCoder<K, OutputT>) output.getCoder();
     Coder<OutputT> outputCoder = outputKVCoder.getValueCoder();
-/*
-    final SparkCombineFn.WindowedAccumulatorCoder<KV<K, V>, V, AccumT> waCoder =
-        sparkCombineFn.accumulatorCoder(windowCoder, aCoder, windowingStrategy);
-*/
 
     List<PCollectionView<?>> sideInputs = combineTransform.getSideInputs();
     Map<PCollectionView<?>, WindowingStrategy<?, ?>> sideInputStrategies = new HashMap<>();
@@ -85,17 +79,6 @@ class CombinePerKeyTranslatorBatch<K, V, AccumT, OutputT>
     SideInputBroadcast broadcastStateData =
         SideInputBroadcast.createBroadcastSideInputs(sideInputs, context);
 
-    final SparkCombineFn<KV<K, V>, V, AccumT, OutputT> sparkCombineFn =
-        SparkCombineFn.keyed(
-            combineFn,
-            context.getSerializableOptions(),
-            sideInputStrategies,
-            broadcastStateData,
-            windowingStrategy, accumCo);
-
-    KeyValueGroupedDataset<K, WindowedValue<KV<K, V>>> groupedDataset =
-        inputDataset.groupByKey(KVHelpers.extractKey(), EncoderHelpers.fromBeamCoder(keyCoder));
-
     Coder<AccumT> accumulatorCoder;
     try {
       accumulatorCoder =
@@ -104,17 +87,18 @@ class CombinePerKeyTranslatorBatch<K, V, AccumT, OutputT>
     } catch (CannotProvideCoderException e) {
       throw new RuntimeException(e);
     }
+    final SparkCombineFn<KV<K, V>, V, AccumT, OutputT> sparkCombineFn =
+        SparkCombineFn.keyed(
+            combineFn,
+            context.getSerializableOptions(),
+            sideInputStrategies,
+            broadcastStateData,
+            windowingStrategy, accumulatorCoder, outputCoder);
 
-    inputDataset.agg(
-        new AggregatorCombiner<K, V, AccumT, OutputT, BoundedWindow>(
-            (Combine.CombineFn<V, AccumT, OutputT>) combineTransform.getFn(), windowingStrategy, accumulatorCoder, outputCoder)
-            .toColumn());
-
-    Dataset<Tuple2<K, Iterable<WindowedValue<OutputT>>>> combinedDataset =
-        groupedDataset.agg(
-            new AggregatorCombiner<K, V, AccumT, OutputT, BoundedWindow>(
-                    combineFn, windowingStrategy, accumulatorCoder, outputCoder)
-                .toColumn());
+    KeyValueGroupedDataset<K, WindowedValue<KV<K, V>>> groupedDataset =
+        inputDataset.groupByKey(KVHelpers.extractKey(), EncoderHelpers.fromBeamCoder(keyCoder));
+    Dataset<Tuple2<K, Iterable<WindowedValue<OutputT>>>> combinedDataset = groupedDataset.<Iterable<WindowedValue<OutputT>>>agg(
+        sparkCombineFn.toColumn());
 
     // expand the list into separate elements and put the key back into the elements
     WindowedValue.WindowedValueCoder<KV<K, OutputT>> wvCoder =
