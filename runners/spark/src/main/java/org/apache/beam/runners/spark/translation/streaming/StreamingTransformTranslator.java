@@ -23,6 +23,7 @@ import static org.apache.beam.vendor.guava.v26_0_jre.com.google.common.base.Prec
 
 import com.google.auto.service.AutoService;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -58,6 +59,7 @@ import org.apache.beam.runners.spark.util.GlobalWatermarkHolder;
 import org.apache.beam.runners.spark.util.SideInputBroadcast;
 import org.apache.beam.runners.spark.util.SparkCompat;
 import org.apache.beam.sdk.coders.Coder;
+import org.apache.beam.sdk.coders.IterableCoder;
 import org.apache.beam.sdk.coders.KvCoder;
 import org.apache.beam.sdk.io.Read;
 import org.apache.beam.sdk.transforms.Combine;
@@ -69,6 +71,7 @@ import org.apache.beam.sdk.transforms.GroupByKey;
 import org.apache.beam.sdk.transforms.PTransform;
 import org.apache.beam.sdk.transforms.ParDo;
 import org.apache.beam.sdk.transforms.Reshuffle;
+import org.apache.beam.sdk.transforms.View;
 import org.apache.beam.sdk.transforms.reflect.DoFnSignatures;
 import org.apache.beam.sdk.transforms.windowing.BoundedWindow;
 import org.apache.beam.sdk.transforms.windowing.GlobalWindow;
@@ -85,6 +88,7 @@ import org.apache.beam.sdk.values.TimestampedValue;
 import org.apache.beam.sdk.values.TupleTag;
 import org.apache.beam.sdk.values.WindowingStrategy;
 import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.collect.ImmutableMap;
+import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.collect.Iterables;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.api.java.JavaSparkContext$;
@@ -495,8 +499,40 @@ public final class StreamingTransformTranslator {
       }
     };
   }
+  private static <ReadT, WriteT>
+  TransformEvaluator<View.CreatePCollectionView<ReadT, WriteT>> createPCollView() {
+    return new TransformEvaluator<View.CreatePCollectionView<ReadT, WriteT>>() {
+      @Override
+      public void evaluate(
+          View.CreatePCollectionView<ReadT, WriteT> transform, EvaluationContext context) {
+/*
+        Iterable<? extends WindowedValue<?>> iter =
+            context.getWindowedValues(context.getInput(transform));
+*/
+        PCollection<Iterable<ReadT>> values = (PCollection<Iterable<ReadT>>)Iterables
+            .getOnlyElement(context.getCurrentTransform().getInputs().values());
+        PCollectionView<WriteT> output = transform.getView();
+        Coder<Iterable<WindowedValue<?>>> coderInternal =
+            (Coder)
+                IterableCoder.of(
+                    WindowedValue.getFullCoder(
+                        output.getCoderInternal(),
+                        output.getWindowingStrategyInternal().getWindowFn().windowCoder()));
 
-  private static final Map<String, TransformEvaluator<?>> EVALUATORS = new HashMap<>();
+        @SuppressWarnings("unchecked")
+        Iterable<WindowedValue<?>> iterCast = (Iterable<WindowedValue<?>>) iter;
+
+        context.putPView(output, iterCast, coderInternal);
+      }
+
+      @Override
+      public String toNativeString() {
+        return "<createPCollectionView>";
+      }
+    };
+  }
+
+      private static final Map<String, TransformEvaluator<?>> EVALUATORS = new HashMap<>();
 
   static {
     EVALUATORS.put(PTransformTranslation.READ_TRANSFORM_URN, readUnbounded());
@@ -508,6 +544,7 @@ public final class StreamingTransformTranslator {
     EVALUATORS.put(PTransformTranslation.ASSIGN_WINDOWS_TRANSFORM_URN, window());
     EVALUATORS.put(PTransformTranslation.FLATTEN_TRANSFORM_URN, flattenPColl());
     EVALUATORS.put(PTransformTranslation.RESHUFFLE_URN, reshuffle());
+    EVALUATORS.put(PTransformTranslation.CREATE_VIEW_TRANSFORM_URN, createPCollView());
   }
 
   @Nullable

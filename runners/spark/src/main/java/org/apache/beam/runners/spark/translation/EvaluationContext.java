@@ -225,13 +225,16 @@ public class EvaluationContext {
     }
   }
 
-  /**
+/*
+  */
+/**
    * Retrieve an object of Type T associated with the PValue passed in.
    *
    * @param value PValue to retrieve associated data for.
    * @param <T> Type of object to return.
    * @return Native object.
-   */
+   *//*
+
   @SuppressWarnings("TypeParameterUnusedInFormals")
   public <T> T get(PValue value) {
     if (pobjects.containsKey(value)) {
@@ -245,6 +248,7 @@ public class EvaluationContext {
     }
     throw new IllegalStateException("Cannot resolve un-known PObject: " + value);
   }
+*/
 
   /**
    * Return the current views creates in the pipeline.
@@ -278,7 +282,7 @@ public class EvaluationContext {
     return this.cacheCandidates;
   }
 
-  <T> Iterable<WindowedValue<T>> getWindowedValues(PCollection<T> pcollection) {
+  public <T> Iterable<WindowedValue<T>> getWindowedValues(PCollection<T> pcollection) {
     @SuppressWarnings("unchecked")
     BoundedDataset<T> boundedDataset = (BoundedDataset<T>) datasets.get(pcollection);
     leaves.remove(boundedDataset);
