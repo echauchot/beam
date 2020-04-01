@@ -25,7 +25,6 @@ import com.hazelcast.jet.core.Watermark;
 import com.hazelcast.jet.impl.util.ExceptionUtil;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -58,6 +57,7 @@ import org.apache.beam.sdk.util.WindowedValue;
 import org.apache.beam.sdk.values.KV;
 import org.apache.beam.sdk.values.TupleTag;
 import org.apache.beam.sdk.values.WindowingStrategy;
+import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.collect.Iterators;
 import org.joda.time.Instant;
 
 /**
@@ -303,9 +303,8 @@ public class WindowGroupP<K, V> extends AbstractProcessor {
       Collection<? extends BoundedWindow> windows = dropLateWindows(windowedValue.getWindows());
       if (!windows.isEmpty()) {
         try {
-          reduceFnRunner.processElements(
-              Collections.singletonList(
-                  windowedValue)); // todo: try to process more than one element at a time...
+          reduceFnRunner.processElements(Iterators.singletonIterator(windowedValue));
+          // todo: try to process more than one element at a time...
           reduceFnRunner.persist();
         } catch (Exception e) {
           throw ExceptionUtil.rethrow(e);

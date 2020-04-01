@@ -133,7 +133,7 @@ public class GroupAlsoByWindowViaWindowSetNewDoFn<
             reduceFn,
             c.getPipelineOptions());
 
-    reduceFnRunner.processElements(keyedWorkItem.elementsIterable());
+    reduceFnRunner.processElements(keyedWorkItem.elementsIterable().iterator());
     reduceFnRunner.onTimers(keyedWorkItem.timersIterable());
     reduceFnRunner.persist();
   }

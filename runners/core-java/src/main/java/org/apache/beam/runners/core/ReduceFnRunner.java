@@ -25,6 +25,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -317,13 +318,13 @@ public class ReduceFnRunner<K, InputT, OutputT, W extends BoundedWindow> {
    *       setting holds, and invoking {@link ReduceFn#onTrigger}.
    * </ol>
    */
-  public void processElements(Iterable<WindowedValue<InputT>> values) throws Exception {
-    if (!values.iterator().hasNext()) {
+  public void processElements(Iterator<WindowedValue<InputT>> valuesIterator) throws Exception {
+    if (!valuesIterator.hasNext()) {
       return;
     }
 
     // Determine all the windows for elements.
-    Set<W> windows = collectWindows(values);
+    Set<W> windows = collectWindows(valuesIterator);
     // If an incoming element introduces a new window, attempt to merge it into an existing
     // window eagerly.
     Map<W, W> windowToMergeResult = mergeWindows(windows);
@@ -345,7 +346,8 @@ public class ReduceFnRunner<K, InputT, OutputT, W extends BoundedWindow> {
     Set<W> windowsToConsider = windowsThatAreOpen(windows);
 
     // Process each element, using the updated activeWindows determined by mergeWindows.
-    for (WindowedValue<InputT> value : values) {
+    while (valuesIterator.hasNext()) {
+      WindowedValue<InputT> value = valuesIterator.next();
       processElement(windowToMergeResult, value);
     }
 
@@ -381,9 +383,10 @@ public class ReduceFnRunner<K, InputT, OutputT, W extends BoundedWindow> {
   }
 
   /** Extract the windows associated with the values. */
-  private Set<W> collectWindows(Iterable<WindowedValue<InputT>> values) throws Exception {
+  private Set<W> collectWindows(Iterator<WindowedValue<InputT>> valuesIterator) throws Exception {
     Set<W> windows = new HashSet<>();
-    for (WindowedValue<?> value : values) {
+    while (valuesIterator.hasNext()) {
+      WindowedValue<?> value = valuesIterator.next();
       for (BoundedWindow untypedWindow : value.getWindows()) {
         @SuppressWarnings("unchecked")
         W window = (W) untypedWindow;

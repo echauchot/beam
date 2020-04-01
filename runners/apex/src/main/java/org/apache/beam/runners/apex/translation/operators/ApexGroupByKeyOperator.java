@@ -28,7 +28,6 @@ import com.datatorrent.api.annotation.OutputPortFieldAnnotation;
 import com.esotericsoftware.kryo.serializers.FieldSerializer.Bind;
 import com.esotericsoftware.kryo.serializers.JavaSerializer;
 import java.util.Collection;
-import java.util.Collections;
 import org.apache.beam.runners.apex.ApexPipelineOptions;
 import org.apache.beam.runners.apex.translation.utils.ApexStateInternals.ApexStateBackend;
 import org.apache.beam.runners.apex.translation.utils.ApexStreamTuple;
@@ -55,6 +54,7 @@ import org.apache.beam.sdk.values.PCollection;
 import org.apache.beam.sdk.values.TupleTag;
 import org.apache.beam.sdk.values.WindowingStrategy;
 import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.base.Throwables;
+import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.collect.Iterators;
 import org.joda.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -210,7 +210,7 @@ public class ApexGroupByKeyOperator<K, V>
     timerInternals.setContext(kv.getKey(), this.keyCoder, this.inputWatermark, null);
     ReduceFnRunner<K, V, Iterable<V>, BoundedWindow> reduceFnRunner =
         newReduceFnRunner(kv.getKey());
-    reduceFnRunner.processElements(Collections.singletonList(updatedWindowedValue));
+    reduceFnRunner.processElements(Iterators.singletonIterator(updatedWindowedValue));
     reduceFnRunner.persist();
   }
 

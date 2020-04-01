@@ -560,7 +560,8 @@ public class ReduceFnTester<InputT, OutputT, W extends BoundedWindow> {
     ReduceFnRunner<String, InputT, OutputT, W> runner = createRunner();
     runner.processElements(
         new LateDataDroppingDoFnRunner.LateDataFilter(objectStrategy, timerInternals)
-            .filter(KEY, inputs));
+            .filter(KEY, inputs)
+            .iterator());
 
     // Persist after each bundle.
     runner.persist();

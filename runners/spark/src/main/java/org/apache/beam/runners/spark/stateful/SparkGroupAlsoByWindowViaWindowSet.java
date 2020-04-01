@@ -293,7 +293,7 @@ public class SparkGroupAlsoByWindowViaWindowSet implements Serializable {
 
               LOG.trace(logPrefix + ": non expired input elements: {}", nonExpiredElements);
 
-              reduceFnRunner.processElements(nonExpiredElements);
+              reduceFnRunner.processElements(nonExpiredElements.iterator());
             } catch (final Exception e) {
               throw new RuntimeException("Failed to process element with ReduceFnRunner", e);
             }

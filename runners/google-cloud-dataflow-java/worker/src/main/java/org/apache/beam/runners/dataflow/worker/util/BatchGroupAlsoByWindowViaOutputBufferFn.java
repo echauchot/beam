@@ -91,7 +91,7 @@ public class BatchGroupAlsoByWindowViaOutputBufferFn<K, InputT, OutputT, W exten
             options);
 
     // Process the elements.
-    reduceFnRunner.processElements(element.getValue());
+    reduceFnRunner.processElements(element.getValue().iterator());
 
     // Finish any pending windows by advancing the input watermark to infinity.
     timerInternals.advanceInputWatermark(BoundedWindow.TIMESTAMP_MAX_VALUE);

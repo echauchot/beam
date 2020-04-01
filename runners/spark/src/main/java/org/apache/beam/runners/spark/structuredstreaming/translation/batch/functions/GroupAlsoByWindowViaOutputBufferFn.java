@@ -39,7 +39,10 @@ import org.apache.beam.sdk.util.WindowedValue;
 import org.apache.beam.sdk.values.KV;
 import org.apache.beam.sdk.values.TupleTag;
 import org.apache.beam.sdk.values.WindowingStrategy;
+import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.base.Function;
+import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.collect.Iterators;
 import org.apache.spark.api.java.function.FlatMapGroupsFunction;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.joda.time.Instant;
 
 /** A FlatMap function that groups by windows in batch mode using {@link ReduceFnRunner}. */
@@ -67,15 +70,17 @@ public class GroupAlsoByWindowViaOutputBufferFn<K, InputT, W extends BoundedWind
   public Iterator<WindowedValue<KV<K, Iterable<InputT>>>> call(
       K key, Iterator<WindowedValue<KV<K, InputT>>> iterator) throws Exception {
 
-    // we have to materialize the Iterator because ReduceFnRunner.processElements expects
-    // to have all elements to merge the windows between each other.
-    // possible OOM even though the spark framework spills to disk if a given group is too large to
-    // fit in memory.
-    ArrayList<WindowedValue<InputT>> values = new ArrayList<>();
-    while (iterator.hasNext()) {
-      WindowedValue<KV<K, InputT>> wv = iterator.next();
-      values.add(wv.withValue(wv.getValue().getValue()));
-    }
+    Iterator<WindowedValue<InputT>> transformedIterator =
+        Iterators.transform(iterator, new Function<WindowedValue<KV<K, InputT>>, WindowedValue<InputT>>() {
+
+          @Nullable
+          @Override
+          public WindowedValue<InputT> apply(@Nullable WindowedValue<KV<K, InputT>> wv) {
+            return wv.withValue(wv.getValue().getValue());
+          }
+        });
+
+
 
     // ------ based on GroupAlsoByWindowsViaOutputBufferDoFn ------//
 
@@ -103,7 +108,7 @@ public class GroupAlsoByWindowViaOutputBufferFn<K, InputT, W extends BoundedWind
             options.get());
 
     // Process the grouped values.
-    reduceFnRunner.processElements(values);
+    reduceFnRunner.processElements(transformedIterator);
 
     // Finish any pending windows by advancing the input watermark to infinity.
     timerInternals.advanceInputWatermark(BoundedWindow.TIMESTAMP_MAX_VALUE);

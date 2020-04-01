@@ -96,7 +96,7 @@ class SparkGroupAlsoByWindowViaOutputBufferFn<K, InputT, W extends BoundedWindow
             options.get());
 
     // Process the grouped values.
-    reduceFnRunner.processElements(values);
+    reduceFnRunner.processElements(values.iterator());
 
     // Finish any pending windows by advancing the input watermark to infinity.
     timerInternals.advanceInputWatermark(BoundedWindow.TIMESTAMP_MAX_VALUE);

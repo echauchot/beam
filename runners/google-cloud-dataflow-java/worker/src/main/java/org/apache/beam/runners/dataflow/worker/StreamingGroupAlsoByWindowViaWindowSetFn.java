@@ -91,7 +91,7 @@ public class StreamingGroupAlsoByWindowViaWindowSetFn<K, InputT, OutputT, W exte
             reduceFn,
             options);
 
-    reduceFnRunner.processElements(keyedWorkItem.elementsIterable());
+    reduceFnRunner.processElements(keyedWorkItem.elementsIterable().iterator());
     reduceFnRunner.onTimers(keyedWorkItem.timersIterable());
     reduceFnRunner.persist();
   }

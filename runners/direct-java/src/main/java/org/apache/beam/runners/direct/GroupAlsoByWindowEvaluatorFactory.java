@@ -181,7 +181,7 @@ class GroupAlsoByWindowEvaluatorFactory implements TransformEvaluatorFactory {
 
       // Drop any elements within expired windows
       reduceFnRunner.processElements(
-          dropExpiredWindows(key, workItem.elementsIterable(), timerInternals));
+          dropExpiredWindows(key, workItem.elementsIterable(), timerInternals).iterator());
       reduceFnRunner.onTimers(workItem.timersIterable());
       reduceFnRunner.persist();
     }
