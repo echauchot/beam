@@ -32,6 +32,7 @@ import org.apache.beam.sdk.coders.KvCoder;
 import org.apache.beam.sdk.transforms.Combine;
 import org.apache.beam.sdk.transforms.CombineWithContext;
 import org.apache.beam.sdk.transforms.PTransform;
+import org.apache.beam.sdk.transforms.windowing.BoundedWindow;
 import org.apache.beam.sdk.util.CombineFnUtil;
 import org.apache.beam.sdk.util.WindowedValue;
 import org.apache.beam.sdk.values.KV;
@@ -95,15 +96,25 @@ class CombinePerKeyTranslatorBatch<K, V, AccumT, OutputT>
             broadcastStateData,
             windowingStrategy, accumulatorCoder, outputCoder);
 
+    Coder<? extends BoundedWindow> windowCoder = input.getWindowingStrategy().getWindowFn().windowCoder();
+    WindowedValue.WindowedValueCoder<KV<K, V>> wvKvCoder = WindowedValue.FullWindowedValueCoder
+      .of(inputCoder, windowCoder);
+
+    // explode windows because SparkCombineFn expects exploded windows
+    Dataset<WindowedValue<KV<K, V>>> explodedInputDataset = inputDataset.flatMap(
+      (FlatMapFunction<WindowedValue<KV<K, V>>, WindowedValue<KV<K, V>>>) kvWindowedValue -> {
+        Iterable<WindowedValue<KV<K, V>>> explodedWindowedValues = kvWindowedValue.explodeWindows();
+        return explodedWindowedValues.iterator();
+      }, EncoderHelpers.fromBeamCoder(wvKvCoder));
+
     KeyValueGroupedDataset<K, WindowedValue<KV<K, V>>> groupedDataset =
-        inputDataset.groupByKey(KVHelpers.extractKey(), EncoderHelpers.fromBeamCoder(keyCoder));
+        explodedInputDataset.groupByKey(KVHelpers.extractKey(), EncoderHelpers.fromBeamCoder(keyCoder));
     Dataset<Tuple2<K, Iterable<WindowedValue<OutputT>>>> combinedDataset = groupedDataset.<Iterable<WindowedValue<OutputT>>>agg(
         sparkCombineFn.toColumn());
 
-    // expand the list into separate elements and put the key back into the elements
-    WindowedValue.WindowedValueCoder<KV<K, OutputT>> wvCoder =
-        WindowedValue.FullWindowedValueCoder.of(
-            outputKVCoder, input.getWindowingStrategy().getWindowFn().windowCoder());
+    // expand the iterable into separate elements and put the key back into the elements
+    WindowedValue.WindowedValueCoder<KV<K, OutputT>> wvCoder = WindowedValue.FullWindowedValueCoder
+      .of(outputKVCoder, windowCoder);
     Dataset<WindowedValue<KV<K, OutputT>>> outputDataset =
         combinedDataset.flatMap(
             (FlatMapFunction<
