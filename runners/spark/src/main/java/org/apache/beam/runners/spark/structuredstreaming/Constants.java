@@ -16,11 +16,11 @@
  * limitations under the License.
  */
 
-package org.apache.beam.runners.spark.structuredstreaming.translation.streaming;
+package org.apache.beam.runners.spark.structuredstreaming;
 
-/**
- * Tag interface to decouple source from implementation. The implementation is spark version dependent.
- */
+public class Constants {
 
-public interface DatasetSourceStreaming {
+  public static final String BEAM_SOURCE_OPTION = "beam-source";
+  public static final String DEFAULT_PARALLELISM = "default-parallelism";
+  public static final String PIPELINE_OPTIONS = "pipeline-options";
 }
