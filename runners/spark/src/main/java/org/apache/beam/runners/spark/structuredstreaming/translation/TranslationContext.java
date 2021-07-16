@@ -216,8 +216,7 @@ public class TranslationContext {
             dataStreamWriter =
                 dataStreamWriter.option("checkpointLocation", options.getCheckpointDir());
           }
-          // TODO: Do not await termination here.
-          dataStreamWriter.foreach(new NoOpForeachWriter<>()).start().awaitTermination();
+          dataStreamWriter.foreach(new NoOpForeachWriter<>()).start();
         } else {
           if (options.getTestMode()) {
             LOG.debug("**** dataset {} catalyst execution plans ****", ++datasetIndex);
@@ -228,7 +227,7 @@ public class TranslationContext {
           dataset.foreach((ForeachFunction) t -> {});
         }
       }
-    } catch (StreamingQueryException e) {
+    } catch (Exception e) {
       throw new RuntimeException("Pipeline execution failed: " + e);
     }
   }
